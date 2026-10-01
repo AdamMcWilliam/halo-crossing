@@ -97,7 +97,7 @@ const HaloProjectileDef g_halo_projectiles[HALO_PROJ_COUNT] = {
         .detonation_timer_attached = 0.75f,
         .impact_damage = { HALO_DAMAGE_NEEDLE, 4.0f, 5.0f, 0, 0, 0.1f, 0 },
         .detonation_damage = { HALO_DAMAGE_NEEDLE, 9.0f, 11.0f, 0, 0, 0.4f, 0 },
-        .supercombine_count = 7, /* [approx] CE pops at 7 */
+        .supercombine_count = 7, /* projectile_collision.c: 6 stuck siblings + the arriving needle */
         .supercombine_damage = { HALO_DAMAGE_EXPLOSION, 80.0f, 90.0f, 0.3f, 1.0f, 3.0f, 0 },
         .render_style = HALO_RENDER_NEEDLE, .render_rgba = 0xFF5AD2FF, .render_size = 0.03f,
     },
