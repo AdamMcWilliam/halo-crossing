@@ -231,6 +231,8 @@ void halo_damage_unit(HaloSim* sim, int victim, int attacker, const HaloDamageEf
                       hv3 toward_attacker, int head);
 void halo_remove_unit(HaloSim* sim, int unit);
 void halo_give_weapon(HaloSim* sim, int unit, HaloWeaponId weapon);
+/* Replaces the held weapon outright, ready to fire (squad loadouts). */
+void halo_set_unit_weapon(HaloSim* sim, int unit, HaloWeaponId weapon);
 /* Hands the player every weapon, full ammo and grenades, and keeps doing so on respawn. */
 void halo_give_arsenal(HaloSim* sim);
 /* A kinematic, AI-less unit the host positions every frame (pos/yaw). */

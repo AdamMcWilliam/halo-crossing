@@ -6,6 +6,7 @@
 #include "m_collision_bg.h"
 #include "m_field_info.h"
 #include "m_field_make.h"
+#include "m_name_table.h"
 
 /* LineCheck only builds collision for the 3x3 tiles around its start point,
  * so long rays are walked in segments shorter than one tile. */
@@ -148,6 +149,26 @@ static int ac_can_walk(void* ctx, hv3 from, hv3 to, float radius) {
     (void)ctx;
     (void)radius;
     return walkable_ac(hc_h2a_pos(from), hc_h2a_pos(to));
+}
+
+int hc_ac_world_spawn_ok(hv3* p) {
+    xyz_t a = hc_h2a_pos(*p);
+    a.y = ground_y_ac(a);
+    if (is_water_ac(a)) return 0;
+    /* Only bare ground: no trees, flowers, fences, signs or house footprints.
+     * Blocks without an item layer (station, beach) rely on the walk test. */
+    mActor_name_t* fg = mFI_GetUnitFG(a);
+    if (fg != NULL && *fg != EMPTY_NO) return 0;
+    static const float k_dir[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+    int open = 0;
+    for (int i = 0; i < 4; i++) {
+        xyz_t b = { a.x + k_dir[i][0] * TILE_AC, a.y, a.z + k_dir[i][1] * TILE_AC };
+        b.y = ground_y_ac(b);
+        open += walkable_ac(a, b);
+    }
+    if (open < 3) return 0;
+    *p = hc_a2h_pos(a);
+    return 1;
 }
 
 /* ---- A* over AC tiles with a lazily filled edge cache -------------------- */

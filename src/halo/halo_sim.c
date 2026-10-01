@@ -214,6 +214,12 @@ void halo_give_weapon(HaloSim* s, int ui, HaloWeaponId weapon) {
     if (slot == &u->weapon) u->weapon.ready_timer = g_halo_weapons[weapon].ready_time;
 }
 
+void halo_set_unit_weapon(HaloSim* s, int ui, HaloWeaponId weapon) {
+    if (ui < 0 || ui >= HALO_MAX_UNITS || !s->units[ui].active) return;
+    if (weapon == HALO_WEAPON_NONE) s->units[ui].weapon.id = HALO_WEAPON_NONE;
+    else halo_weapon_init(&s->units[ui].weapon, weapon);
+}
+
 void halo_kill_unit(HaloSim* s, int ui, int killer) {
     if (!halo_unit_alive(s, ui)) return;
     HaloUnit* u = &s->units[ui];
