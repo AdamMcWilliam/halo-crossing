@@ -1,0 +1,152 @@
+diff --git a/pc/CMakeLists.txt b/pc/CMakeLists.txt
+index 70baf0f..1054b24 100644
+--- a/pc/CMakeLists.txt
++++ b/pc/CMakeLists.txt
+@@ -405,6 +405,14 @@ if(WIN32)
+     set(RC_FILE "${CMAKE_CURRENT_SOURCE_DIR}/res/app.rc")
+ endif()
+ 
++# =============================================================================
++# Halo Crossing gameplay layer (sources live outside this tree; see HC_ROOT)
++# =============================================================================
++set(HC_SOURCES "")
++if(DEFINED HC_ROOT)
++    include(${HC_ROOT}/cmake/halo_crossing.cmake)
++endif()
++
+ # =============================================================================
+ # Build executable
+ # =============================================================================
+@@ -413,6 +421,7 @@ add_executable(ac_pc
+     ${FIXNES_SOURCES}
+     ${GAME_C_SOURCES}
+     ${GAME_CXX_SOURCES}
++    ${HC_SOURCES}
+     ${RC_FILE}
+ )
+ 
+diff --git a/pc/src/pc_main.c b/pc/src/pc_main.c
+index cfe8ba5..0af78e4 100644
+--- a/pc/src/pc_main.c
++++ b/pc/src/pc_main.c
+@@ -11,6 +11,9 @@
+ #include "pc_settings_menu.h"
+ #include "pc_profiler.h"
+ #include "m_kankyo.h"
++#ifdef HALO_CROSSING
++#include "hc_hooks.h"
++#endif
+ 
+ /* prefer discrete GPU on laptops */
+ #ifdef _WIN32
+@@ -166,6 +169,11 @@ int pc_platform_poll_events(void) {
+     pc_typing_update();
+ 
+     while (SDL_PollEvent(&event)) {
++#ifdef HALO_CROSSING
++        if (!g_pc_paused && hc_hook_sdl_event(&event)) {
++            continue;
++        }
++#endif
+         switch (event.type) {
+             case SDL_QUIT:
+                 g_pc_running = 0;
+diff --git a/pc/src/pc_pad.c b/pc/src/pc_pad.c
+index f0ff835..2f8e12a 100644
+--- a/pc/src/pc_pad.c
++++ b/pc/src/pc_pad.c
+@@ -4,6 +4,9 @@
+ #include "pc_keybindings.h"
+ #include "pc_settings.h"
+ #include <dolphin/pad.h>
++#ifdef HALO_CROSSING
++#include "hc_hooks.h"
++#endif
+ 
+ /* analog stick constants */
+ #define STICK_MAGNITUDE     80
+@@ -171,6 +174,10 @@ u32 PADRead(PADStatus* status) {
+     status[0].substickY = cstickY;
+     status[0].err = 0; /* PAD_ERR_NONE */
+ 
++#ifdef HALO_CROSSING
++    hc_hook_filter_pad(&status[0]);
++#endif
++
+     return PAD_CHAN0_BIT; /* Controller 1 connected */
+ }
+ 
+diff --git a/src/game/m_play.c b/src/game/m_play.c
+index d59ac1e..572d575 100644
+--- a/src/game/m_play.c
++++ b/src/game/m_play.c
+@@ -43,6 +43,9 @@
+ #include "pc_diag.h"
+ #include "pc_platform.h"
+ #endif
++#ifdef HALO_CROSSING
++#include "hc_hooks.h"
++#endif
+ 
+ #define Game_play_HYRAL_SIZE 0x3E800 // 256,000 bytes
+ #define Game_play_IS_PAUSED(play) (ZURUMODE2_ENABLED() ? (!Pause_proc(&(play)->pause, &(play)->game.pads[PAD1])) : FALSE)
+@@ -95,6 +98,9 @@ static void event_title_flag_off() {
+ static void Game_play_camera_proc(GAME_PLAY* play) {
+     Camera2_ClearActorTalking_Cull(play);
+     Camera2_process(play);
++#ifdef HALO_CROSSING
++    hc_hook_camera(play);
++#endif
+ }
+ 
+ static void Game_play_fbdemo_wipe_destroy(GAME_PLAY* play) {
+@@ -355,6 +361,9 @@ static void Game_play_fbdemo_proc(GAME_PLAY* play) {
+ extern void play_cleanup(GAME* game) {
+     GAME_PLAY* play = (GAME_PLAY*)game;
+ 
++#ifdef HALO_CROSSING
++    hc_hook_play_cleanup(play);
++#endif
+     mMsg_dt(game);
+     banti_dt();
+ 
+@@ -497,6 +506,9 @@ extern void play_init(GAME* game) {
+     watch_my_step_ct();
+     event_title_flag_off();
+     mEA_GetCardDLProgram();
++#ifdef HALO_CROSSING
++    hc_hook_play_init(play);
++#endif
+ }
+ 
+ static void Game_play_move_fbdemo_not_move(GAME* game) {
+@@ -533,6 +545,9 @@ static void Game_play_move_fbdemo_not_move(GAME* game) {
+         game->doing_point = 0;
+         game->doing_point_specific = 0x90;
+         Actor_info_call_actor(play, &play->actor_info);
++#ifdef HALO_CROSSING
++        hc_hook_play_update(play);
++#endif
+         game->doing_point = 0;
+         game->doing_point_specific = 0x91;
+         game->doing_point = 1;
+@@ -766,6 +781,9 @@ static int makeBumpTexture(GAME_PLAY* play, GRAPH* graph1, GRAPH* graph2) {
+     if ((GETREG(HREG, 80) != 10) || (GETREG(HREG, 85) != 0)) {
+         PC_DIAG(3, "makeBumpTexture: before Actor_info_draw_actor\n");
+         Actor_info_draw_actor(play, &play->actor_info);
++#ifdef HALO_CROSSING
++        hc_hook_draw_world(play);
++#endif
+         PC_DIAG(3, "makeBumpTexture: Actor draw done, Camera2...\n");
+         Camera2_draw(play);
+         mMsg_Draw((GAME*)play);
+@@ -895,6 +913,9 @@ extern void play_main(GAME* game) {
+     game->doing_point = 0;
+     game->doing_point_specific = 0xAA;
+     Game_play_draw(play);
++#ifdef HALO_CROSSING
++    hc_hook_draw_hud(play);
++#endif
+ 
+     game->doing_point = 0;
+     game->doing_point_specific = 0xB4;
