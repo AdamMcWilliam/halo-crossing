@@ -16,15 +16,28 @@ typedef struct HcView {
     int show_ai;
     int show_nav;
     float time;
+    float zoom;           /* scope magnification, 1 = unzoomed */
+    float weapon_switch_age; /* seconds since the last weapon switch (shows the list) */
 } HcView;
 
 #define HC_DEBUG_LINES 8
+#define HC_MAX_LABELS 16
+
+/* Text floating over something in the world (villager shouts). */
+typedef struct HcWorldLabel {
+    xyz_t pos;            /* AC world position */
+    char text[48];
+    float alpha;
+    u32 rgb;              /* 0xRRGGBB00 */
+} HcWorldLabel;
 
 typedef struct HcHudText {
     char lines[HC_DEBUG_LINES][96];
     int count;
     char center[64];      /* big centered message, "" = none */
     float center_alpha;
+    HcWorldLabel labels[HC_MAX_LABELS];
+    int label_count;
 } HcHudText;
 
 void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* view);

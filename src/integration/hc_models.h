@@ -35,5 +35,8 @@ typedef struct HcModel {
 
 const HcModel* hc_model_for_biped(HaloBipedId biped);
 const HcModel* hc_model_first_person(HaloWeaponId weapon);
+/* Recolors a character's held-weapon / emitter boxes to match `weapon`. */
+u32 hc_weapon_body_rgba(HaloWeaponId weapon, u32 fallback);
+u32 hc_weapon_glow_rgba(HaloWeaponId weapon, u32 fallback);
 
 #endif

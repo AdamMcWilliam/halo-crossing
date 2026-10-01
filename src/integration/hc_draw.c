@@ -25,14 +25,18 @@ typedef struct HcFx {
     int active;
     xyz_t pos;
     float age, life;
-    float size0, size1;   /* AC units */
+    float size0, size1;   /* AC units; beam width for beams */
     u32 color;
+    int beam;             /* draw a ribbon pos -> pos2 instead of a glow */
+    xyz_t pos2;
+    float rise;           /* AC units/s upward drift (smoke) */
 } HcFx;
 
-#define HC_MAX_FX 96
+#define HC_MAX_FX 160
+#define DRAW_RANGE_AC 1900.0f  /* beyond the town fog; don't spend display list on it */
 static HcFx s_fx[HC_MAX_FX];
 
-static void fx_spawn(xyz_t pos, float life, float size0, float size1, u32 color) {
+static HcFx* fx_spawn(xyz_t pos, float life, float size0, float size1, u32 color) {
     int slot = 0;
     float oldest = -1.0f;
     for (int i = 0; i < HC_MAX_FX; i++) {
@@ -46,13 +50,14 @@ static void fx_spawn(xyz_t pos, float life, float size0, float size1, u32 color)
         }
     }
     HcFx* f = &s_fx[slot];
+    memset(f, 0, sizeof(*f));
     f->active = 1;
     f->pos = pos;
-    f->age = 0.0f;
     f->life = life;
     f->size0 = size0;
     f->size1 = size1;
     f->color = color;
+    return f;
 }
 
 void hc_fx_clear(void) {
@@ -63,7 +68,33 @@ void hc_fx_update(float dt) {
     for (int i = 0; i < HC_MAX_FX; i++) {
         if (!s_fx[i].active) continue;
         s_fx[i].age += dt;
+        s_fx[i].pos.y += s_fx[i].rise * dt;
         if (s_fx[i].age >= s_fx[i].life) s_fx[i].active = 0;
+    }
+}
+
+static void explosion_fx(xyz_t p, int def, float radius) {
+    u32 outer = 0xFFB050E0, core = 0xFFF4C8F0;
+    switch (def) {
+        case HALO_PROJ_PLASMA_GRENADE: outer = 0x9CD2FFE0; core = 0xFFFFFFF0; break;
+        case HALO_PROJ_FUEL_ROD: outer = 0x7CFF3CE0; core = 0xE8FFD0F0; break;
+        case HALO_PROJ_NEEDLE: outer = 0xFF5AD2E0; core = 0xFFE0F6F0; break;
+        default: break;
+    }
+    if (radius <= 0.0f) {
+        /* A single needle popping. */
+        fx_spawn(p, 0.2f, 4.0f, hc_h2a_len(0.25f), outer);
+        return;
+    }
+    fx_spawn(p, 0.5f, hc_h2a_len(0.2f), hc_h2a_len(radius * 0.8f), outer);
+    fx_spawn(p, 0.28f, hc_h2a_len(0.1f), hc_h2a_len(radius * 0.45f), core);
+    if (def == HALO_PROJ_ROCKET || def == HALO_PROJ_FRAG_GRENADE) {
+        for (int k = 0; k < 3; k++) {
+            xyz_t s = p;
+            s.x += (float)(k - 1) * hc_h2a_len(0.25f);
+            HcFx* f = fx_spawn(s, 1.4f, hc_h2a_len(0.3f), hc_h2a_len(radius * 0.6f), 0x6A665E90);
+            f->rise = 18.0f;
+        }
     }
 }
 
@@ -73,20 +104,34 @@ void hc_fx_from_event(HaloSim* sim, const HaloEvent* e) {
         case HALO_EV_PROJECTILE_IMPACT: {
             const HaloProjectileDef* pd = &g_halo_projectiles[e->def];
             u32 c = (pd->render_rgba & 0xFFFFFF00) | 0xE0;
-            float sz = e->def == HALO_PROJ_AR_BULLET ? 3.0f : 6.0f;
+            float sz = pd->render_style == HALO_RENDER_TRACER ? 3.0f : 6.0f;
+            if (e->def == HALO_PROJ_SNIPER_BULLET) sz = 8.0f;
+            if (pd->render_style == HALO_RENDER_FLAME) sz = 10.0f;
             fx_spawn(p, 0.12f, sz, sz * 1.8f, c);
             break;
         }
         case HALO_EV_EXPLOSION:
-            fx_spawn(p, 0.45f, hc_h2a_len(0.2f), hc_h2a_len(e->value * 0.8f), 0x9CD2FFE0);
-            fx_spawn(p, 0.25f, hc_h2a_len(0.1f), hc_h2a_len(e->value * 0.45f), 0xFFFFFFF0);
+            explosion_fx(p, e->def, e->value);
             break;
-        case HALO_EV_WEAPON_FIRED:
-            if (e->unit >= 0 && !sim->units[e->unit].is_player) {
+        case HALO_EV_WEAPON_FIRED: {
+            if (e->def == HALO_WEAPON_SNIPER_RIFLE && sim->world && sim->world->raycast) {
+                /* CE's sniper leaves a vapour trail hanging in the air. */
+                hv3 from = hv3_mad(e->pos, e->dir, 0.35f);
+                from.z -= 0.04f;
+                hv3 to = hv3_mad(e->pos, e->dir, 120.0f);
+                HaloRayHit hit;
+                if (sim->world->raycast(sim->world->ctx, e->pos, to, &hit)) to = hit.point;
+                HcFx* f = fx_spawn(hc_h2a_pos(from), 0.7f, 2.2f, 0.5f, 0xD8F0FFB0);
+                f->beam = 1;
+                f->pos2 = hc_h2a_pos(to);
+            }
+            if (e->unit >= 0 && !sim->units[e->unit].is_player && e->def >= 0) {
                 hv3 m = hv3_mad(e->pos, e->dir, 0.2f);
-                fx_spawn(hc_h2a_pos(m), 0.08f, 4.0f, 6.0f, 0x9CFF8AD0);
+                u32 c = (hc_weapon_glow_rgba((HaloWeaponId)e->def, 0x9CFF8AFF) & 0xFFFFFF00) | 0xD0;
+                fx_spawn(hc_h2a_pos(m), 0.08f, 4.0f, 6.0f, c);
             }
             break;
+        }
         case HALO_EV_SHIELD_DEPLETED:
             fx_spawn(p, 0.3f, hc_h2a_len(0.15f), hc_h2a_len(0.5f), 0x7FC8FFB0);
             break;
@@ -123,6 +168,8 @@ static Gfx* draw_model_boxes(Gfx* g, GRAPH* graph, const HaloSim* sim, int ui, i
         if (fleeing && (b->part == HC_PART_WEAPON || b->part == HC_PART_GLOW)) continue;
         if (u->dead && (b->part == HC_PART_GLOW)) continue;
         u32 c = b->rgba;
+        if (b->part == HC_PART_WEAPON) c = hc_weapon_body_rgba(u->weapon.id, c);
+        if (b->part == HC_PART_GLOW) c = hc_weapon_glow_rgba(u->weapon.id, c);
         if (b->part == HC_PART_GLOW && u->weapon.fire_flash > 0.0f) c = hc_rgba_lerp(c, 0xFFFFFFFF, u->weapon.fire_flash);
         c = tint_flash(c, u->hurt_flash);
         float inflate = 0.0f;
@@ -207,10 +254,11 @@ static Gfx* draw_viewmodel(Gfx* g, GRAPH* graph, const HaloSim* sim, const HcVie
     float kick = w->recoil;
     float off_f = -kick * 0.025f;
     float off_u = bob_u + kick * 0.004f;
+    if (v->zoom > 1.01f) return g; /* looking down the scope */
     float dip = 0.0f;
     if (w->reload_timer > 0.0f && wd->reload_time > 0.0f) {
         float prog = 1.0f - w->reload_timer / wd->reload_time;
-        dip = sinf(prog * HC_PI) * 0.09f;
+        dip = wd->reload_per_round ? 0.05f + sinf(prog * HC_PI) * 0.015f : sinf(prog * HC_PI) * 0.09f;
     }
     if (w->ready_timer > 0.0f && wd->ready_time > 0.0f) dip = hc_maxf(dip, (w->ready_timer / wd->ready_time) * 0.12f);
     if (p->grenade_timer > 0.0f) dip = hc_maxf(dip, 0.05f);
@@ -221,16 +269,20 @@ static Gfx* draw_viewmodel(Gfx* g, GRAPH* graph, const HaloSim* sim, const HcVie
     Matrix_RotateX(HC_RAD_TO_S16(-v->pitch), MTX_MULT);
 
     float k = S * VM_SCALE;
+    int glow_index = 0;
     for (int i = 0; i < m->count; i++) {
         const HcBox* b = &m->boxes[i];
         u32 c = b->rgba;
         if (b->part == HC_PART_GLOW) {
-            if (w->id == HALO_WEAPON_PLASMA_PISTOL) {
-                float heat = w->heat;
-                c = hc_rgba_lerp(0x8CFF6AFF, 0xFF4A2AFF, heat);
+            int gi = glow_index++;
+            if (wd->rounds_loaded_maximum <= 0) {
+                c = hc_rgba_lerp(b->rgba, 0xFF4A2AFF, w->heat);
                 if (w->charge > 0.2f) c = hc_rgba_lerp(c, 0xFFFFFFFF, hc_clampf(w->charge / 0.9f, 0.0f, 1.0f));
                 if (w->overheated) c = (sinf(v->time * 30.0f) > 0.0f) ? 0xFF6A2AFF : 0xC03010FF;
-            } else if (w->rounds_loaded <= 10) {
+            } else if (w->id == HALO_WEAPON_NEEDLER) {
+                /* One crystal per five needles left in the magazine. */
+                if (w->rounds_loaded <= gi * 5) continue;
+            } else if (w->rounds_loaded <= hc_maxf(1.0f, wd->rounds_loaded_maximum / 6.0f)) {
                 c = 0xFF5A3AFF;
             }
             if (w->fire_flash > 0.0f) c = hc_rgba_lerp(c, 0xFFFFFFFF, w->fire_flash * 0.5f);
@@ -250,34 +302,82 @@ static Gfx* draw_projectiles(Gfx* g, GRAPH* graph, GAME_PLAY* play, const HaloSi
         const HaloProjectileDef* pd = &g_halo_projectiles[p->def];
         hv3 hp = hv3_add(hv3_lerp(p->prev_pos, p->pos, sim->alpha), hv3_scale(p->visual_offset, VM_SCALE));
         xyz_t ap = hc_h2a_pos(hp);
-        if (p->def == HALO_PROJ_AR_BULLET) {
-            float speed = hv3_len(p->vel);
-            float trail = hc_minf(p->distance + 0.3f, 1.6f);
-            hv3 tail = speed > 0.0f ? hv3_mad(hp, p->vel, -trail / speed) : hp;
-            g = hc_gfx_beam(g, graph, hc_h2a_pos(tail), ap, v->eye, 1.4f, 0xFFD06000, 0xFFE68ADC);
-        } else {
-            float r = hc_h2a_len(pd->render_size);
-            u32 c = pd->render_rgba;
-            if (p->def == HALO_PROJ_PLASMA_GRENADE) {
-                float pulse = (p->attached_unit >= 0 || p->stuck) ? 0.5f + 0.5f * sinf(v->time * 28.0f) : 0.3f;
-                g = hc_gfx_glow(g, graph, play, ap, r * (1.6f + pulse), (c & 0xFFFFFF00) | 0x90);
-                g = hc_gfx_glow(g, graph, play, ap, r * 0.8f, 0xE8F4FFFF);
-            } else {
+        float dx = ap.x - v->eye.x, dy = ap.y - v->eye.y, dz = ap.z - v->eye.z;
+        if (dx * dx + dy * dy + dz * dz > DRAW_RANGE_AC * DRAW_RANGE_AC) continue;
+        float r = hc_h2a_len(pd->render_size);
+        u32 c = pd->render_rgba;
+        float speed = hv3_len(p->vel);
+        switch (pd->render_style) {
+            case HALO_RENDER_TRACER: {
+                float trail = hc_minf(p->distance + 0.3f, p->def == HALO_PROJ_SHOTGUN_PELLET ? 0.6f : 1.6f);
+                hv3 tail = speed > 0.0f ? hv3_mad(hp, p->vel, -trail / speed) : hp;
+                float width = p->def == HALO_PROJ_SHOTGUN_PELLET ? 0.9f : 1.4f;
+                g = hc_gfx_beam(g, graph, hc_h2a_pos(tail), ap, v->eye, width, (c & 0xFFFFFF00), (c & 0xFFFFFF00) | 0xDC);
+                break;
+            }
+            case HALO_RENDER_ROCKET: {
+                hv3 tail = speed > 0.0f ? hv3_mad(hp, p->vel, -hc_minf(p->distance + 0.1f, 1.4f) / speed) : hp;
+                g = hc_gfx_beam(g, graph, hc_h2a_pos(tail), ap, v->eye, hc_h2a_len(0.12f), 0xB4B0A800, 0xD8D4CCA0);
+                g = hc_gfx_glow(g, graph, play, ap, r * 2.0f, 0xFFB040C0);
+                g = hc_gfx_glow(g, graph, play, ap, r * 0.8f, 0xFFF8E0FF);
+                break;
+            }
+            case HALO_RENDER_FLAME: {
+                float life = pd->maximum_range / hc_maxf(pd->initial_velocity, 0.1f);
+                float t = hc_clampf(p->age / life, 0.0f, 1.0f);
+                u32 fc = hc_rgba_lerp(0xFFD060FF, 0xC02A10FF, t);
+                g = hc_gfx_glow(g, graph, play, ap, r * (1.0f + t * 4.0f), (fc & 0xFFFFFF00) | (u32)(200.0f * (1.0f - t * 0.7f)));
+                if (t < 0.4f) g = hc_gfx_glow(g, graph, play, ap, r * 0.8f, 0xFFF4C0C0);
+                break;
+            }
+            case HALO_RENDER_NEEDLE: {
+                if (p->attached_unit < 0 && speed > 0.0f) {
+                    hv3 tail = hv3_mad(hp, p->vel, -hc_minf(p->distance + 0.05f, 0.35f) / speed);
+                    g = hc_gfx_beam(g, graph, hc_h2a_pos(tail), ap, v->eye, 1.6f, (c & 0xFFFFFF00), (c & 0xFFFFFF00) | 0xE0);
+                }
+                float pulse = p->attached_unit >= 0 ? 0.6f + 0.4f * sinf(v->time * 20.0f + (float)i) : 1.0f;
+                g = hc_gfx_glow(g, graph, play, ap, r * 2.0f * pulse, (c & 0xFFFFFF00) | 0xA0);
+                break;
+            }
+            case HALO_RENDER_GRENADE: {
+                int armed = p->attached_unit >= 0 || p->stuck;
+                if (p->def == HALO_PROJ_FRAG_GRENADE) {
+                    float blink = sinf(v->time * 16.0f) > 0.0f ? 1.0f : 0.3f;
+                    g = hc_gfx_glow(g, graph, play, ap, r * 1.4f, 0x4A5A30F0);
+                    g = hc_gfx_glow(g, graph, play, ap, r * 0.5f, 0xFF4030FF & (0xFFFFFF00 | (u32)(blink * 255.0f)));
+                } else {
+                    float pulse = armed ? 0.5f + 0.5f * sinf(v->time * 28.0f) : 0.3f;
+                    g = hc_gfx_glow(g, graph, play, ap, r * (1.6f + pulse), (c & 0xFFFFFF00) | 0x90);
+                    g = hc_gfx_glow(g, graph, play, ap, r * 0.8f, 0xE8F4FFFF);
+                }
+                break;
+            }
+            default: {
+                if (speed > 0.0f) {
+                    hv3 tail = hv3_mad(hp, p->vel, -hc_minf(p->distance + 0.05f, 0.4f) / speed);
+                    g = hc_gfx_beam(g, graph, hc_h2a_pos(tail), ap, v->eye, r * 1.2f, (c & 0xFFFFFF00), (c & 0xFFFFFF00) | 0x70);
+                }
                 g = hc_gfx_glow(g, graph, play, ap, r * 2.2f, (c & 0xFFFFFF00) | 0x80);
                 g = hc_gfx_glow(g, graph, play, ap, r * 0.9f, 0xF0FFE8F0);
+                break;
             }
         }
     }
     return g;
 }
 
-static Gfx* draw_fx(Gfx* g, GRAPH* graph, GAME_PLAY* play) {
+static Gfx* draw_fx(Gfx* g, GRAPH* graph, GAME_PLAY* play, const HcView* v) {
     for (int i = 0; i < HC_MAX_FX; i++) {
         const HcFx* f = &s_fx[i];
         if (!f->active) continue;
         float t = f->age / f->life;
         float size = f->size0 + (f->size1 - f->size0) * t;
         u32 a = (u32)((float)HC_A(f->color) * (1.0f - t));
+        if (f->beam) {
+            u32 c = (f->color & 0xFFFFFF00) | a;
+            g = hc_gfx_beam(g, graph, f->pos, f->pos2, v->eye, size, c, c);
+            continue;
+        }
         g = hc_gfx_glow(g, graph, play, f->pos, size, (f->color & 0xFFFFFF00) | a);
     }
     return g;
@@ -326,8 +426,12 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
     opa = hc_gfx_mode_opa(opa);
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         const HaloUnit* u = &sim->units[i];
-        /* The AC villager stands in for the Chief in AC camera mode. */
-        if (!u->active || u->is_player) continue;
+        /* The AC villager stands in for the Chief in AC camera mode; kinematic
+         * proxies are AC actors that the host already draws. */
+        if (!u->active || u->is_player || u->kinematic) continue;
+        xyz_t ap = hc_h2a_pos(u->pos);
+        float dx = ap.x - v->eye.x, dz = ap.z - v->eye.z;
+        if (dx * dx + dz * dz > DRAW_RANGE_AC * DRAW_RANGE_AC) continue;
         opa = draw_unit(opa, graph, sim, i);
     }
     if (v->show_nav) opa = draw_debug_paths(opa, graph, sim);
@@ -338,20 +442,35 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
     Gfx* xlu = NOW_POLY_XLU_DISP;
     xlu = hc_gfx_mode_xlu(xlu);
     xlu = draw_projectiles(xlu, graph, play, sim, v);
-    xlu = draw_fx(xlu, graph, play);
+    xlu = draw_fx(xlu, graph, play, v);
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         const HaloUnit* u = &sim->units[i];
-        if (!u->active || u->dead || u->is_player || u->shield_flash <= 0.0f) continue;
+        if (!u->active || u->dead || u->is_player || u->kinematic || u->shield_flash <= 0.0f) continue;
         unit_matrix(sim, i);
         xlu = draw_model_boxes(xlu, graph, sim, i, 1, u->shield_flash * 0.55f);
     }
-    if (v->first_person && p && !p->dead && p->weapon.fire_flash > 0.5f) {
+    if (v->first_person && p && !p->dead && p->weapon.fire_flash > 0.5f && p->weapon.id != HALO_WEAPON_NONE &&
+        v->zoom <= 1.01f) {
         const HaloWeaponDef* wd = &g_halo_weapons[p->weapon.id];
+        const HcModel* fm = hc_model_first_person(p->weapon.id);
+        /* Muzzle = the front of the weapon's furthest-forward box. */
+        float front = 0.28f, muzzle_u = -0.068f, muzzle_l = wd->fp_offset[1] * 1.1f;
+        for (int k = 0; fm && k < fm->count; k++) {
+            const HcBox* b = &fm->boxes[k];
+            if (b->part == HC_PART_WEAPON && b->f + b->hf > front) {
+                front = b->f + b->hf;
+                muzzle_u = b->u;
+                muzzle_l = b->l;
+            }
+        }
         hv3 eye = hc_a2h_pos(v->eye);
-        float mf = (p->weapon.id == HALO_WEAPON_ASSAULT_RIFLE ? 0.42f : 0.28f) * VM_SCALE;
-        hv3 m = hv3_add(eye, view_basis_point(v, mf, wd->fp_offset[1] * VM_SCALE * 1.1f, -0.068f * VM_SCALE));
-        u32 c = p->weapon.id == HALO_WEAPON_ASSAULT_RIFLE ? 0xFFD27AF0 : 0xA8FF8AF0;
-        float radius = S * VM_SCALE * (0.045f + 0.035f * p->weapon.fire_flash);
+        hv3 m = hv3_add(eye, view_basis_point(v, front * VM_SCALE, muzzle_l * VM_SCALE, muzzle_u * VM_SCALE));
+        u32 c = (hc_weapon_glow_rgba(p->weapon.id, 0xFFD27AFF) & 0xFFFFFF00) | 0xF0;
+        float big = (p->weapon.id == HALO_WEAPON_ROCKET_LAUNCHER || p->weapon.id == HALO_WEAPON_SHOTGUN ||
+                     p->weapon.id == HALO_WEAPON_SNIPER_RIFLE || p->weapon.id == HALO_WEAPON_FUEL_ROD)
+                        ? 1.8f
+                        : 1.0f;
+        float radius = S * VM_SCALE * (0.045f + 0.035f * p->weapon.fire_flash) * big;
         xlu = hc_gfx_glow(xlu, graph, play, hc_h2a_pos(m), radius, c);
     }
     if (v->show_collision) xlu = draw_debug_volumes(xlu, graph, sim);
@@ -441,17 +560,25 @@ static Gfx* hud_ammo(Gfx* g, const HaloUnit* p, float t) {
     if (w->id == HALO_WEAPON_NONE) return g;
     const HaloWeaponDef* wd = &g_halo_weapons[w->id];
     float x = 14.0f, y = 14.0f;
-    if (wd->rounds_loaded_maximum > 0) {
-        /* MA5B: one tick per round, 3 rows of 20. */
-        int per_row = 20;
-        for (int i = 0; i < wd->rounds_loaded_maximum; i++) {
+    int max = wd->rounds_loaded_maximum;
+    int low = w->rounds_loaded <= (int)hc_maxf(1.0f, max / 6.0f);
+    if (max > 60) {
+        /* Flamethrower: a fuel gauge rather than 100 ticks. */
+        float f = (float)w->rounds_loaded / (float)max;
+        g = hc_gfx_hud_rect(g, x - 1.0f, y - 1.0f, 62.0f, 9.0f, HUD_BLUE_DIM);
+        g = hc_gfx_hud_rect(g, x, y, 60.0f * f, 7.0f, low ? HUD_RED : HUD_BLUE);
+    } else if (max > 0) {
+        /* One tick per round: the AR's 3 x 20, chunkier ticks for small magazines. */
+        int per_row = max < 20 ? max : 20;
+        float tw = hc_clampf(60.0f / (float)per_row - 1.0f, 2.0f, 9.0f);
+        float th = max <= 12 ? 8.0f : 5.0f;
+        for (int i = 0; i < max; i++) {
             int row = i / per_row, col = i % per_row;
-            u32 c = i < w->rounds_loaded ? HUD_BLUE : HUD_BLUE_DIM;
-            if (w->rounds_loaded <= 10 && i < w->rounds_loaded) c = HUD_RED;
-            g = hc_gfx_hud_rect(g, x + col * 3.0f, y + row * 6.0f, 2.0f, 5.0f, c);
+            u32 c = i < w->rounds_loaded ? (low ? HUD_RED : HUD_BLUE) : HUD_BLUE_DIM;
+            g = hc_gfx_hud_rect(g, x + col * (tw + 1.0f), y + row * (th + 1.0f), tw, th, c);
         }
     } else {
-        /* Plasma Pistol: heat bar + battery. */
+        /* Covenant energy weapons: heat bar + charge. */
         g = hc_gfx_hud_rect(g, x - 1.0f, y - 1.0f, 62.0f, 7.0f, HUD_BLUE_DIM);
         u32 hc = w->overheated ? ((sinf(t * 20.0f) > 0.0f) ? HUD_RED : 0x801810FF) : hc_rgba_lerp(HUD_BLUE, HUD_RED, w->heat);
         g = hc_gfx_hud_rect(g, x, y, 60.0f * w->heat, 5.0f, hc);
@@ -460,11 +587,48 @@ static Gfx* hud_ammo(Gfx* g, const HaloUnit* p, float t) {
             g = hc_gfx_hud_rect(g, x, y + 8.0f, 60.0f * cf, 3.0f, cf >= 1.0f ? 0xB4FF9CFF : 0x6FA860FF);
         }
     }
-    /* Plasma grenades. */
-    for (int i = 0; i < p->grenades[HALO_GRENADE_PLASMA]; i++) {
-        g = hc_gfx_hud_rect(g, x + i * 8.0f, y + 22.0f, 6.0f, 6.0f, 0x6CB6FFFF);
-        g = hc_gfx_hud_rect(g, x + i * 8.0f + 2.0f, y + 24.0f, 2.0f, 2.0f, 0xE8F4FFFF);
+    /* Grenades: frags then plasmas; the type G will throw is outlined. */
+    static const u32 k_gren[HALO_GRENADE_COUNT] = { [HALO_GRENADE_FRAG] = 0x8AA65AFF, [HALO_GRENADE_PLASMA] = 0x6CB6FFFF };
+    static const HaloGrenadeId k_order[2] = { HALO_GRENADE_FRAG, HALO_GRENADE_PLASMA };
+    float gy = y + 24.0f;
+    for (int k = 0; k < 2; k++) {
+        HaloGrenadeId type = k_order[k];
+        float gx = x + k * 36.0f;
+        if (p->grenade_type == type) g = hc_gfx_hud_rect(g, gx - 2.0f, gy - 2.0f, 34.0f, 10.0f, 0x4FB4FF60);
+        for (int i = 0; i < g_halo_grenades[type].maximum_count; i++) {
+            u32 c = i < p->grenades[type] ? k_gren[type] : 0x20304060;
+            g = hc_gfx_hud_rect(g, gx + i * 8.0f, gy, 6.0f, 6.0f, c);
+            if (i < p->grenades[type]) g = hc_gfx_hud_rect(g, gx + i * 8.0f + 2.0f, gy + 2.0f, 2.0f, 2.0f, 0xE8F4FFFF);
+        }
     }
+    return g;
+}
+
+static Gfx* hud_ring(Gfx* g, float cx, float cy, float r, int dots, u32 c) {
+    for (int i = 0; i < dots; i++) {
+        float a = (float)i * (2.0f * HC_PI / (float)dots);
+        g = hc_gfx_hud_rect(g, cx + cosf(a) * r - 0.5f, cy + sinf(a) * r - 0.5f, 1.0f, 1.0f, c);
+    }
+    return g;
+}
+
+/* Black outside a circle, thin crosshairs inside: the CE scope view. */
+static Gfx* hud_scope(Gfx* g, float zoom) {
+    float cx = 160.0f, cy = 120.0f, r = 104.0f;
+    for (float yy = 0.0f; yy < 240.0f; yy += 2.0f) {
+        float dy = yy + 1.0f - cy;
+        float half = fabsf(dy) < r ? sqrtf(r * r - dy * dy) : 0.0f;
+        g = hc_gfx_hud_rect(g, 0.0f, yy, cx - half, 2.0f, 0x000000FF);
+        g = hc_gfx_hud_rect(g, cx + half, yy, 320.0f - (cx + half), 2.0f, 0x000000FF);
+    }
+    g = hud_ring(g, cx, cy, r, 160, 0x4FB4FFA0);
+    g = hc_gfx_hud_rect(g, cx - r, cy - 0.25f, r * 2.0f, 0.5f, 0x4FB4FF90);
+    g = hc_gfx_hud_rect(g, cx - 0.25f, cy - r, 0.5f, r * 2.0f, 0x4FB4FF90);
+    for (int i = 1; i <= 4; i++) {
+        float o = (float)i * 12.0f;
+        g = hc_gfx_hud_rect(g, cx - 3.0f, cy + o, 6.0f, 0.5f, 0x4FB4FFB0);
+    }
+    (void)zoom;
     return g;
 }
 
@@ -491,21 +655,68 @@ static int aiming_at_enemy(HaloSim* sim, const HaloUnit* p, const HcView* v) {
 static Gfx* hud_reticle(Gfx* g, HaloSim* sim, const HaloUnit* p, const HcView* v) {
     float cx = 160.0f, cy = 120.0f;
     u32 c = aiming_at_enemy(sim, p, v) ? HUD_RED : HUD_BLUE;
-    if (p->weapon.id == HALO_WEAPON_ASSAULT_RIFLE) {
-        float r = 7.0f + p->weapon.error * 7.0f;
-        for (int i = 0; i < 20; i++) {
-            float a = (float)i * (2.0f * HC_PI / 20.0f);
-            g = hc_gfx_hud_rect(g, cx + cosf(a) * r - 0.5f, cy + sinf(a) * r - 0.5f, 1.0f, 1.0f, c);
+    if (v->zoom > 1.01f) return hc_gfx_hud_rect(g, cx - 0.5f, cy - 0.5f, 1.0f, 1.0f, c);
+    float err = p->weapon.error;
+    switch (p->weapon.id) {
+        case HALO_WEAPON_ASSAULT_RIFLE:
+            g = hud_ring(g, cx, cy, 7.0f + err * 7.0f, 20, c);
+            break;
+        case HALO_WEAPON_PISTOL:
+            g = hud_ring(g, cx, cy, 5.0f + err * 3.0f, 14, c);
+            g = hc_gfx_hud_rect(g, cx - 9.0f, cy - 0.5f, 3.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx + 6.0f, cy - 0.5f, 3.0f, 1.0f, c);
+            break;
+        case HALO_WEAPON_SHOTGUN:
+            g = hud_ring(g, cx, cy, 17.0f, 32, c);
+            break;
+        case HALO_WEAPON_SNIPER_RIFLE:
+            g = hc_gfx_hud_rect(g, cx - 5.0f, cy - 0.5f, 3.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx + 2.0f, cy - 0.5f, 3.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx - 0.5f, cy + 2.0f, 1.0f, 3.0f, c);
+            break;
+        case HALO_WEAPON_ROCKET_LAUNCHER:
+            for (int sx = -1; sx <= 1; sx += 2) {
+                for (int sy = -1; sy <= 1; sy += 2) {
+                    g = hc_gfx_hud_rect(g, cx + sx * 11.0f - (sx > 0 ? 4.0f : 0.0f), cy + sy * 11.0f, 4.0f, 1.0f, c);
+                    g = hc_gfx_hud_rect(g, cx + sx * 11.0f, cy + sy * 11.0f - (sy > 0 ? 4.0f : 0.0f), 1.0f, 4.0f, c);
+                }
+            }
+            break;
+        case HALO_WEAPON_FLAMETHROWER:
+            g = hud_ring(g, cx, cy, 11.0f, 10, c);
+            g = hud_ring(g, cx, cy, 5.0f, 6, c);
+            break;
+        case HALO_WEAPON_NEEDLER:
+            for (int k = 0; k < 3; k++) {
+                float a = -HC_PI * 0.5f + (float)k * (2.0f * HC_PI / 3.0f);
+                for (int s = 0; s < 3; s++) {
+                    float rr = 5.0f + err * 4.0f + (float)s * 1.5f;
+                    g = hc_gfx_hud_rect(g, cx + cosf(a) * rr - 0.5f, cy + sinf(a) * rr - 0.5f, 1.0f, 1.0f, c);
+                }
+            }
+            break;
+        case HALO_WEAPON_FUEL_ROD:
+            g = hud_ring(g, cx, cy, 9.0f, 18, c);
+            g = hc_gfx_hud_rect(g, cx - 4.0f, cy - 0.5f, 8.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx - 0.5f, cy - 4.0f, 1.0f, 8.0f, c);
+            break;
+        case HALO_WEAPON_PLASMA_RIFLE: {
+            float o = 4.0f + err * 4.0f;
+            g = hc_gfx_hud_rect(g, cx - o - 4.0f, cy - 0.5f, 4.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx + o, cy - 0.5f, 4.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx - 0.5f, cy - o - 4.0f, 1.0f, 4.0f, c);
+            g = hc_gfx_hud_rect(g, cx - 0.5f, cy + o, 1.0f, 4.0f, c);
+            break;
         }
-        g = hc_gfx_hud_rect(g, cx - 0.5f, cy - 0.5f, 1.0f, 1.0f, c);
-    } else {
-        /* Plasma pistol: four arrows around a gap. */
-        g = hc_gfx_hud_rect(g, cx - 6.0f, cy - 0.5f, 3.0f, 1.0f, c);
-        g = hc_gfx_hud_rect(g, cx + 3.0f, cy - 0.5f, 3.0f, 1.0f, c);
-        g = hc_gfx_hud_rect(g, cx - 0.5f, cy - 6.0f, 1.0f, 3.0f, c);
-        g = hc_gfx_hud_rect(g, cx - 0.5f, cy + 3.0f, 1.0f, 3.0f, c);
+        default:
+            /* Plasma pistol: four arrows around a gap. */
+            g = hc_gfx_hud_rect(g, cx - 6.0f, cy - 0.5f, 3.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx + 3.0f, cy - 0.5f, 3.0f, 1.0f, c);
+            g = hc_gfx_hud_rect(g, cx - 0.5f, cy - 6.0f, 1.0f, 3.0f, c);
+            g = hc_gfx_hud_rect(g, cx - 0.5f, cy + 3.0f, 1.0f, 3.0f, c);
+            return g;
     }
-    return g;
+    return hc_gfx_hud_rect(g, cx - 0.5f, cy - 0.5f, 1.0f, 1.0f, c);
 }
 
 static Gfx* hud_damage_dir(Gfx* g, const HaloUnit* p, const HcView* v) {
@@ -542,6 +753,7 @@ static Gfx* hud_tracker(Gfx* g, HaloSim* sim, const HaloUnit* p, const HcView* v
         float px = cx - sinf(rel) * k, py = cy - cosf(rel) * k;
         float pulse = 0.6f + 0.4f * sinf(t * 8.0f);
         u32 c = u->team == p->team ? 0xFFE65AFF : (0xFF3A2A00 | (u32)(pulse * 255.0f));
+        if (u->team == HALO_TEAM_NEUTRAL) c = 0xE8E8E8C0;
         g = hc_gfx_hud_rect(g, px - 2.0f, py - 2.0f, 4.0f, 4.0f, c);
     }
     return g;
@@ -559,6 +771,7 @@ void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* v, const HcHudText
     g = hc_gfx_hud_mode(g);
     if (p && v->first_person) {
         if (!p->dead) {
+            if (v->zoom > 1.01f) g = hud_scope(g, v->zoom);
             g = hud_shield(g, p, v->time);
             g = hud_ammo(g, p, v->time);
             g = hud_reticle(g, sim, p, v);
@@ -593,7 +806,34 @@ void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* v, const HcHudText
                 pc_text_draw(game, buf, 80.0f, 10.0f, 0x4F, 0xB4, 0xFF, 255, 0.5f);
                 if (w->overheated) pc_text_draw(game, "OVERHEATED", 132.0f, 150.0f, 0xFF, 0x3A, 0x2A, 230, 0.45f);
             }
-            pc_text_draw(game, wd->hud_name, 14.0f, 42.0f, 0x4F, 0xB4, 0xFF, 200, 0.38f);
+            pc_text_draw(game, wd->hud_name, 14.0f, 48.0f, 0x4F, 0xB4, 0xFF, 200, 0.38f);
+            if (v->zoom > 1.01f) {
+                snprintf(buf, sizeof(buf), "%.0fx", v->zoom);
+                pc_text_draw(game, buf, 152.0f, 196.0f, 0x4F, 0xB4, 0xFF, 230, 0.5f);
+            }
+        }
+        if (sim->arsenal_enabled && v->weapon_switch_age < 1.6f) {
+            float fade = hc_clampf((1.6f - v->weapon_switch_age) / 0.4f, 0.0f, 1.0f);
+            for (int k = 0; k < HALO_WEAPON_COUNT; k++) {
+                if (!sim->arsenal_owned[k]) continue;
+                int cur = k == w->id;
+                snprintf(buf, sizeof(buf), "%d %s", (k + 1) % 10, g_halo_weapons[k].hud_name);
+                float tw = (float)pc_text_width(buf) * 0.36f;
+                int a = (int)((cur ? 255.0f : 130.0f) * fade);
+                if (cur) pc_text_draw(game, buf, 310.0f - tw, 58.0f + k * 8.0f, 0xFF, 0xFF, 0xFF, a, 0.36f);
+                else pc_text_draw(game, buf, 310.0f - tw, 58.0f + k * 8.0f, 0x4F, 0xB4, 0xFF, a, 0.36f);
+            }
+        }
+    }
+    if (text) {
+        for (int i = 0; i < text->label_count; i++) {
+            const HcWorldLabel* l = &text->labels[i];
+            float sx, sy;
+            if (l->alpha <= 0.0f || !project(play, l->pos, &sx, &sy)) continue;
+            float tw = (float)pc_text_width(l->text) * 0.4f;
+            int a = (int)(hc_clampf(l->alpha, 0.0f, 1.0f) * 255.0f);
+            pc_text_draw(game, l->text, sx - tw * 0.5f + 0.6f, sy - 7.4f, 0x10, 0x10, 0x10, a / 2, 0.4f);
+            pc_text_draw(game, l->text, sx - tw * 0.5f, sy - 8.0f, HC_R(l->rgb), HC_G(l->rgb), HC_B(l->rgb), a, 0.4f);
         }
     }
     if (p && v->first_person && p->dead) {
@@ -610,6 +850,7 @@ void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* v, const HcHudText
         for (int i = 0; i < HALO_MAX_UNITS; i++) {
             const HaloUnit* u = &sim->units[i];
             if (!u->active || u->is_player || !sim->ai[i].active) continue;
+            if (p && hv3_dist(u->pos, p->pos) > 22.0f) continue;
             hv3 head = halo_unit_pos_interp(u, sim->alpha);
             head.z += halo_unit_height(u) + 0.12f;
             float sx, sy;
