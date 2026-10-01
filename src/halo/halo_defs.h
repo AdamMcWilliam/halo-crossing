@@ -15,6 +15,8 @@ typedef enum HaloDamageCategory {
     HALO_DAMAGE_EXPLOSION,
     HALO_DAMAGE_MELEE,
     HALO_DAMAGE_FALL,
+    HALO_DAMAGE_FIRE,
+    HALO_DAMAGE_NEEDLE,            /* weak against shields, nasty against flesh */
     HALO_DAMAGE_CATEGORY_COUNT
 } HaloDamageCategory;
 
@@ -30,11 +32,30 @@ typedef struct HaloDamageEffectDef {
 
 typedef enum HaloProjectileId {
     HALO_PROJ_AR_BULLET,
+    HALO_PROJ_PISTOL_BULLET,
+    HALO_PROJ_SHOTGUN_PELLET,
+    HALO_PROJ_SNIPER_BULLET,
+    HALO_PROJ_ROCKET,
+    HALO_PROJ_FLAME,
     HALO_PROJ_PLASMA_PISTOL_BOLT,
     HALO_PROJ_PLASMA_PISTOL_CHARGED,
+    HALO_PROJ_PLASMA_RIFLE_BOLT,
+    HALO_PROJ_NEEDLE,
+    HALO_PROJ_FUEL_ROD,
     HALO_PROJ_PLASMA_GRENADE,
+    HALO_PROJ_FRAG_GRENADE,
     HALO_PROJ_COUNT
 } HaloProjectileId;
+
+/* How placeholder art draws a projectile (hosts may ignore it). */
+typedef enum HaloRenderStyle {
+    HALO_RENDER_TRACER,
+    HALO_RENDER_BOLT,
+    HALO_RENDER_GRENADE,
+    HALO_RENDER_ROCKET,
+    HALO_RENDER_FLAME,
+    HALO_RENDER_NEEDLE,
+} HaloRenderStyle;
 
 typedef struct HaloProjectileDef {
     const char* name;
@@ -47,22 +68,35 @@ typedef struct HaloProjectileDef {
     int attaches_to_world;
     float detonation_timer;          /* seconds after arming (thrown); 0 = on impact */
     float detonation_timer_attached; /* seconds after sticking */
-    float bounce_restitution;        /* for unarmed grenade bounces */
-    HaloDamageEffectDef impact_damage;
-    HaloDamageEffectDef detonation_damage; /* area damage; zero radius = none */
+    float bounce_restitution;        /* > 0: bounces off the world and units (frags) */
+    HaloDamageEffectDef impact_damage; /* also applied when sticking to a unit */
+    HaloDamageEffectDef detonation_damage; /* hits the carrier; area damage when radius > 0 */
+    int supercombine_count;          /* needler: this many stuck in one unit detonate together */
+    HaloDamageEffectDef supercombine_damage;
+    HaloRenderStyle render_style;
     unsigned int render_rgba;        /* tracer/bolt color for placeholder art */
     float render_size;               /* wu */
 } HaloProjectileDef;
 
+/* Scroll order: human weapons, then Covenant. */
 typedef enum HaloWeaponId {
     HALO_WEAPON_NONE = -1,
     HALO_WEAPON_ASSAULT_RIFLE = 0,
+    HALO_WEAPON_PISTOL,
+    HALO_WEAPON_SHOTGUN,
+    HALO_WEAPON_SNIPER_RIFLE,
+    HALO_WEAPON_ROCKET_LAUNCHER,
+    HALO_WEAPON_FLAMETHROWER,
     HALO_WEAPON_PLASMA_PISTOL,
+    HALO_WEAPON_PLASMA_RIFLE,
+    HALO_WEAPON_NEEDLER,
+    HALO_WEAPON_FUEL_ROD,
     HALO_WEAPON_COUNT
 } HaloWeaponId;
 
 typedef enum HaloGrenadeId {
     HALO_GRENADE_PLASMA,
+    HALO_GRENADE_FRAG,
     HALO_GRENADE_COUNT
 } HaloGrenadeId;
 
@@ -90,7 +124,8 @@ typedef struct HaloWeaponDef {
     int rounds_loaded_maximum;       /* magazine size; 0 = energy weapon */
     int rounds_total_initial;        /* reserve on pickup */
     int rounds_total_maximum;
-    float reload_time;
+    float reload_time;               /* per round when reload_per_round (shotgun) */
+    int reload_per_round;            /* shells go in one at a time; firing interrupts */
     float ready_time;                /* switch-to time */
     float heat_recovery_threshold;   /* overheated weapon can fire again below this */
     float heat_overheated_threshold;
@@ -99,6 +134,8 @@ typedef struct HaloWeaponDef {
     float battery_per_round;         /* energy weapons: 0..1 drained per shot */
     float autoaim_angle;             /* aim assist cone, radians */
     float magnetism_range;
+    int zoom_levels;
+    float zoom_magnification[2];
     HaloWeaponTriggerDef trigger;
     /* first-person placeholder pose relative to the eye, wu (forward, left, up) */
     float fp_offset[3];
@@ -117,6 +154,7 @@ typedef enum HaloBipedId {
     HALO_BIPED_CYBORG,   /* Master Chief */
     HALO_BIPED_GRUNT,
     HALO_BIPED_ELITE,
+    HALO_BIPED_VILLAGER, /* hit volume for a host-driven Animal Crossing NPC */
     HALO_BIPED_COUNT
 } HaloBipedId;
 

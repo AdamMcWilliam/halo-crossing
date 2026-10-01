@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "halo/halo_sim.h"
+#include "halo/halo_internal.h"
 
 static int g_failures;
 
@@ -229,12 +229,236 @@ static void test_plasma_grenade_stick(void) {
     CHECK(s.units[gi].dead, "stuck grunt died");
 }
 
+static void hold_weapon(HaloSim* s, HaloWeaponId w) {
+    HaloUnit* p = halo_player(s);
+    p->control.weapon_select = w + 1;
+    halo_sim_tick(s);
+    run_seconds(s, g_halo_weapons[w].ready_time + 0.1f);
+}
+
+static int count_events(HaloSim* s, HaloEventType type, int def) {
+    int n = 0;
+    for (int e = 0; e < s->event_count; e++)
+        if (s->events[e].type == type && (def < 0 || s->events[e].def == def)) n++;
+    return n;
+}
+
+static void test_arsenal(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 6);
+    s.arsenal_enabled = 1;
+    int pi = halo_spawn_player(&s, hv3_make(0, 0, 0), 0.0f);
+    HaloUnit* p = &s.units[pi];
+    int owned = 0;
+    for (int w = 0; w < HALO_WEAPON_COUNT; w++) owned += s.arsenal_owned[w];
+    CHECK(owned == HALO_WEAPON_COUNT, "owns %d of %d weapons", owned, HALO_WEAPON_COUNT);
+    CHECK(p->weapon.id == HALO_WEAPON_ASSAULT_RIFLE, "spawns holding the AR");
+    CHECK(p->grenades[HALO_GRENADE_FRAG] == 4 && p->grenades[HALO_GRENADE_PLASMA] == 4, "full grenades");
+
+    p->control.fire = 1;
+    run_seconds(&s, 0.5f);
+    p->control.fire = 0;
+    int ar_loaded = p->weapon.rounds_loaded;
+    CHECK(ar_loaded < 60, "AR fired, mag %d", ar_loaded);
+
+    p->control.weapon_cycle = 1;
+    halo_sim_tick(&s);
+    CHECK(p->weapon.id == HALO_WEAPON_PISTOL, "wheel down -> pistol (got %d)", p->weapon.id);
+    CHECK(p->weapon.ready_timer > 0.0f, "drawing the pistol");
+    p->control.weapon_cycle = -1;
+    halo_sim_tick(&s);
+    p->control.weapon_cycle = -1;
+    halo_sim_tick(&s);
+    CHECK(p->weapon.id == HALO_WEAPON_FUEL_ROD, "wheel up wraps to the fuel rod (got %d)", p->weapon.id);
+    p->control.weapon_select = HALO_WEAPON_NEEDLER + 1;
+    halo_sim_tick(&s);
+    CHECK(p->weapon.id == HALO_WEAPON_NEEDLER, "number key selects the needler");
+    p->control.weapon_select = HALO_WEAPON_ASSAULT_RIFLE + 1;
+    halo_sim_tick(&s);
+    CHECK(p->weapon.rounds_loaded == ar_loaded, "AR magazine kept while holstered (%d vs %d)",
+          p->weapon.rounds_loaded, ar_loaded);
+    p->control.swap_pressed = 1;
+    halo_sim_tick(&s);
+    CHECK(p->weapon.id == HALO_WEAPON_NEEDLER, "swap returns to the last weapon (got %d)", p->weapon.id);
+
+    halo_kill_unit(&s, pi, -1);
+    run_seconds(&s, 3.5f);
+    p = halo_player(&s);
+    owned = 0;
+    for (int w = 0; w < HALO_WEAPON_COUNT; w++) owned += s.arsenal_owned[w];
+    CHECK(p && !p->dead && owned == HALO_WEAPON_COUNT, "respawn keeps the arsenal");
+    CHECK(p && s.arsenal[HALO_WEAPON_ASSAULT_RIFLE].rounds_loaded == 60, "respawn refills");
+}
+
+static void test_shotgun(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 7);
+    s.arsenal_enabled = 1;
+    int pi = halo_spawn_player(&s, hv3_make(0, 0, 0), 0.0f);
+    int gi = halo_spawn_actor(&s, HALO_ACTOR_GRUNT, hv3_make(1.5f, 0, 0), HC_PI);
+    s.ai_frozen = 1;
+    HaloUnit* p = &s.units[pi];
+    hold_weapon(&s, HALO_WEAPON_SHOTGUN);
+    CHECK(p->weapon.id == HALO_WEAPON_SHOTGUN, "holding the shotgun");
+    aim_player_at(&s, gi);
+    p->control.fire = 1;
+    halo_sim_tick(&s);
+    /* Pellets cover 5 wu a tick, so most have already landed: count both. */
+    int pellets = count_events(&s, HALO_EV_PROJECTILE_IMPACT, HALO_PROJ_SHOTGUN_PELLET);
+    for (int i = 0; i < HALO_MAX_PROJECTILES; i++)
+        if (s.projectiles[i].active && s.projectiles[i].def == HALO_PROJ_SHOTGUN_PELLET) pellets++;
+    halo_sim_clear_events(&s);
+    p->control.fire = 0;
+    CHECK(pellets >= 10, "one shell spawned %d pellets", pellets);
+    run_seconds(&s, 0.3f);
+    CHECK(s.units[gi].dead, "point-blank shotgun kills a grunt (body %.1f)", s.units[gi].body);
+    CHECK(p->weapon.rounds_loaded == 11, "one shell spent (%d)", p->weapon.rounds_loaded);
+
+    p->control.reload_pressed = 1;
+    run_seconds(&s, 0.5f);
+    CHECK(p->weapon.rounds_loaded == 12, "shell-by-shell reload (%d)", p->weapon.rounds_loaded);
+}
+
+static void test_rocket(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 8);
+    s.arsenal_enabled = 1;
+    int pi = halo_spawn_player(&s, hv3_make(0, 0, 0), 0.0f);
+    int ei = halo_spawn_actor(&s, HALO_ACTOR_ELITE, hv3_make(6, 0, 0), HC_PI);
+    int gi = halo_spawn_actor(&s, HALO_ACTOR_GRUNT, hv3_make(6, 1.0f, 0), HC_PI);
+    s.ai_frozen = 1;
+    HaloUnit* p = &s.units[pi];
+    hold_weapon(&s, HALO_WEAPON_ROCKET_LAUNCHER);
+    aim_player_at(&s, ei);
+    p->control.fire = 1;
+    int boom = 0;
+    for (int i = 0; i < 30 * 2; i++) {
+        halo_sim_tick(&s);
+        p->control.fire = 0;
+        boom += count_events(&s, HALO_EV_EXPLOSION, HALO_PROJ_ROCKET);
+        halo_sim_clear_events(&s);
+    }
+    CHECK(boom == 1, "rocket exploded once (%d)", boom);
+    CHECK(s.units[ei].dead, "direct rocket kills an elite (shield %.1f body %.1f)", s.units[ei].shield,
+          s.units[ei].body);
+    CHECK(s.units[gi].dead, "splash kills the grunt next to it");
+    CHECK(p->body == 75.0f && p->shield == 75.0f, "shooter untouched at 6 wu");
+}
+
+static void test_needler_supercombine(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 9);
+    s.arsenal_enabled = 1;
+    int pi = halo_spawn_player(&s, hv3_make(0, 0, 0), 0.0f);
+    int ei = halo_spawn_actor(&s, HALO_ACTOR_ELITE, hv3_make(4, 0, 0), HC_PI);
+    s.ai_frozen = 1;
+    HaloUnit* p = &s.units[pi];
+    hold_weapon(&s, HALO_WEAPON_NEEDLER);
+    int super = 0, killed = 0;
+    for (int i = 0; i < 30 * 3 && !killed; i++) {
+        aim_player_at(&s, ei);
+        p->control.fire = 1;
+        halo_sim_tick(&s);
+        for (int e = 0; e < s.event_count; e++) {
+            HaloEvent* ev = &s.events[e];
+            if (ev->type == HALO_EV_EXPLOSION && ev->def == HALO_PROJ_NEEDLE && ev->value > 0.0f) super++;
+            if (ev->type == HALO_EV_UNIT_KILLED && ev->unit == ei) killed = 1;
+        }
+        halo_sim_clear_events(&s);
+    }
+    CHECK(super >= 1, "needles supercombined (%d)", super);
+    CHECK(killed, "needler kills an elite");
+}
+
+static void test_frag_bounce(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 10);
+    s.arsenal_enabled = 1;
+    int pi = halo_spawn_player(&s, hv3_make(WALL_X - 2.5f, 0, 0), 0.0f);
+    HaloUnit* p = &s.units[pi];
+    p->grenade_type = HALO_GRENADE_FRAG;
+    p->control.aim_pitch = 0.0f;
+    p->control.grenade_pressed = 1;
+    int frag = -1, bounced_back = 0, rested = 0, boom = 0;
+    for (int i = 0; i < 30 * 4 && !boom; i++) {
+        halo_sim_tick(&s);
+        boom += count_events(&s, HALO_EV_EXPLOSION, HALO_PROJ_FRAG_GRENADE);
+        halo_sim_clear_events(&s);
+        for (int k = 0; k < HALO_MAX_PROJECTILES && frag < 0; k++)
+            if (s.projectiles[k].active && s.projectiles[k].def == HALO_PROJ_FRAG_GRENADE) frag = k;
+        if (frag >= 0 && s.projectiles[frag].active) {
+            if (s.projectiles[frag].vel.x < -0.1f) bounced_back = 1;
+            if (s.projectiles[frag].stuck) rested = 1;
+        }
+    }
+    CHECK(frag >= 0, "frag thrown");
+    CHECK(p->grenades[HALO_GRENADE_FRAG] == 3, "one frag used (%d)", p->grenades[HALO_GRENADE_FRAG]);
+    CHECK(bounced_back, "frag bounced off the wall");
+    CHECK(rested, "frag came to rest");
+    CHECK(boom == 1, "frag exploded on its fuse");
+    CHECK(s.time > 2.1f && s.time < 2.7f, "fuse ~2.2 s (exploded at %.2f)", s.time);
+}
+
+static void test_villager_proxy(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 11);
+    int pi = halo_spawn_player(&s, hv3_make(0, 0, 0), 0.0f);
+    int vi = halo_spawn_proxy(&s, HALO_BIPED_VILLAGER, HALO_TEAM_NEUTRAL, hv3_make(5, 0, 0), HC_PI);
+    int gi = halo_spawn_actor(&s, HALO_ACTOR_GRUNT, hv3_make(8, 0, 0), HC_PI);
+    HaloUnit* p = &s.units[pi];
+    CHECK(vi >= 0 && s.units[vi].kinematic, "proxy spawned");
+    /* Put the player out of the grunt's sight so the villager is the only thing in view. */
+    p->pos = p->prev_pos = hv3_make(-30, 0, 0);
+    run_seconds(&s, 2.0f);
+    CHECK(s.ai[gi].target != vi, "covenant ignore bystanders");
+    CHECK(s.units[vi].pos.x == 5.0f, "proxy is not moved by the sim");
+
+    p->pos = p->prev_pos = hv3_make(0, 2.0f, 0);
+    s.ai_frozen = 1;
+    int killed = 0;
+    for (int i = 0; i < 30 * 3 && !killed; i++) {
+        aim_player_at(&s, vi);
+        p->control.fire = 1;
+        halo_sim_tick(&s);
+        for (int e = 0; e < s.event_count; e++)
+            if (s.events[e].type == HALO_EV_UNIT_KILLED && s.events[e].unit == vi) killed = 1;
+        halo_sim_clear_events(&s);
+    }
+    CHECK(killed, "villager can be shot");
+    p->control.fire = 0;
+    run_seconds(&s, 50.0f);
+    CHECK(s.units[vi].active && s.units[vi].kinematic, "downed villager is never cleaned up");
+    halo_revive_unit(&s, vi);
+    CHECK(!s.units[vi].dead && s.units[vi].body == 40.0f, "villager gets back up");
+}
+
+static void test_dormancy(void) {
+    HaloSim s;
+    halo_sim_init(&s, &k_flat, 12);
+    s.ai_activation_range = 20.0f;
+    halo_spawn_player(&s, hv3_make(0, 0, 0), 0.0f);
+    int far = halo_spawn_actor(&s, HALO_ACTOR_GRUNT, hv3_make(60, 30, 0), 0.0f);
+    halo_spawn_actor(&s, HALO_ACTOR_GRUNT, hv3_make(8, 0, 0), HC_PI);
+    halo_sim_tick(&s);
+    CHECK(s.dormant_count == 1, "far squad sleeps (%d dormant)", s.dormant_count);
+    halo_ai_notify_noise(&s, hv3_make(58, 30, 0), 20.0f, -1);
+    halo_sim_tick(&s);
+    CHECK(s.ai[far].state != HALO_AI_IDLE, "noise wakes a sleeper");
+}
+
 int main(void) {
     test_movement();
     test_shields();
     test_assault_rifle();
     test_grunt_fight();
     test_plasma_grenade_stick();
+    test_arsenal();
+    test_shotgun();
+    test_rocket();
+    test_needler_supercombine();
+    test_frag_bounce();
+    test_villager_proxy();
+    test_dormancy();
     if (g_failures) {
         printf("%d check(s) failed\n", g_failures);
         return 1;

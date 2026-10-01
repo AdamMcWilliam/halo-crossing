@@ -30,6 +30,7 @@ static hv3 apply_magnetism(HaloSim* s, int ui, hv3 eye, hv3 dir, const HaloWeapo
     hv3 best_dir = dir;
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         if (i == ui || !halo_unit_alive(s, i) || s->units[i].team == u->team) continue;
+        if (!u->is_player && s->units[i].team == HALO_TEAM_NEUTRAL) continue;
         hv3 c = halo_unit_center(&s->units[i]);
         hv3 to = hv3_sub(c, eye);
         float dist = hv3_len(to);
@@ -85,7 +86,8 @@ static void fire_round(HaloSim* s, int ui, int charged) {
         if (weapon_uses_magazine(wd)) {
             w->rounds_loaded -= t->rounds_per_shot > 0 ? t->rounds_per_shot : 1;
             if (w->rounds_loaded < 0) w->rounds_loaded = 0;
-        } else {
+        } else if (u->is_player) {
+            /* AI batteries never run flat; Covenant don't scavenge. */
             w->battery = hc_maxf(0.0f, w->battery - wd->battery_per_round * (charged ? 5.0f : 1.0f));
         }
     }
@@ -109,34 +111,93 @@ static void start_reload(HaloSim* s, int ui) {
     const HaloWeaponDef* wd = &g_halo_weapons[w->id];
     if (!weapon_uses_magazine(wd) || w->reload_timer > 0.0f) return;
     if (w->rounds_loaded >= wd->rounds_loaded_maximum) return;
-    if (w->rounds_reserve <= 0 && !(s->infinite_ammo && u->is_player)) return;
+    if (u->is_player && !s->infinite_ammo && w->rounds_reserve <= 0) return;
     w->reload_timer = wd->reload_time;
     w->charge = 0.0f;
     halo_emit(s, HALO_EV_RELOAD, halo_unit_eye(u), hv3_make(0, 0, 0), ui, -1, w->id, 0.0f);
 }
 
-static void finish_reload(HaloSim* s, int ui) {
+/* Returns 1 if another shell should follow (per-round reloads). */
+static int finish_reload(HaloSim* s, int ui) {
     HaloUnit* u = &s->units[ui];
     HaloWeaponState* w = &u->weapon;
     const HaloWeaponDef* wd = &g_halo_weapons[w->id];
     int need = wd->rounds_loaded_maximum - w->rounds_loaded;
-    if (s->infinite_ammo && u->is_player) {
-        w->rounds_loaded = wd->rounds_loaded_maximum;
-        return;
+    if (wd->reload_per_round && need > 1) need = 1;
+    if ((s->infinite_ammo && u->is_player) || !u->is_player) {
+        w->rounds_loaded += need;
+    } else {
+        int take = need < w->rounds_reserve ? need : w->rounds_reserve;
+        w->rounds_loaded += take;
+        w->rounds_reserve -= take;
     }
-    int take = need < w->rounds_reserve ? need : w->rounds_reserve;
-    w->rounds_loaded += take;
-    w->rounds_reserve -= take;
+    int more = w->rounds_loaded < wd->rounds_loaded_maximum &&
+               (w->rounds_reserve > 0 || !u->is_player || s->infinite_ammo);
+    return wd->reload_per_round && more;
+}
+
+/* Player arsenal: wheel / number keys / swap-to-last. Returns 1 if it switched. */
+static int update_arsenal(HaloSim* s, int ui) {
+    HaloUnit* u = &s->units[ui];
+    if (!s->arsenal_enabled || !u->is_player || u->grenade_timer > 0.0f) return 0;
+    HaloWeaponState* w = &u->weapon;
+    HaloUnitControl* c = &u->control;
+    int cur = w->id;
+    int want = -1;
+    if (c->weapon_select > 0 && c->weapon_select <= HALO_WEAPON_COUNT) {
+        want = c->weapon_select - 1;
+    } else if (c->weapon_cycle != 0 && cur >= 0) {
+        int step = c->weapon_cycle > 0 ? 1 : -1;
+        for (int k = 1; k < HALO_WEAPON_COUNT; k++) {
+            int cand = ((cur + step * k) % HALO_WEAPON_COUNT + HALO_WEAPON_COUNT) % HALO_WEAPON_COUNT;
+            if (s->arsenal_owned[cand]) {
+                want = cand;
+                break;
+            }
+        }
+    } else if (c->swap_pressed) {
+        want = s->arsenal_last;
+    }
+    if (want < 0 || want >= HALO_WEAPON_COUNT || want == cur || !s->arsenal_owned[want]) return 0;
+    if (cur >= 0) {
+        HaloWeaponState* slot = &s->arsenal[cur];
+        *slot = *w;
+        slot->reload_timer = 0.0f;
+        slot->charge = 0.0f;
+        slot->fire_flash = slot->recoil = 0.0f;
+        slot->trigger_was_down = 0;
+        s->arsenal_last = (HaloWeaponId)cur;
+    }
+    int down = w->trigger_was_down;
+    *w = s->arsenal[want];
+    w->ready_timer = g_halo_weapons[want].ready_time;
+    w->trigger_was_down = down; /* no free shot from a held trigger */
+    halo_emit(s, HALO_EV_WEAPON_SWITCHED, halo_unit_eye(u), hv3_make(0, 0, 0), ui, -1, want, 0.0f);
+    return 1;
 }
 
 static void update_grenade(HaloSim* s, int ui) {
     HaloUnit* u = &s->units[ui];
-    const HaloGrenadeDef* gd = &g_halo_grenades[HALO_GRENADE_PLASMA];
-    if (u->control.grenade_pressed && u->grenade_timer <= 0.0f && u->grenades[HALO_GRENADE_PLASMA] > 0) {
+    /* The type is fixed from button press to release. */
+    if (u->control.grenade_cycle_pressed && u->grenade_timer <= 0.0f) {
+        int other = (u->grenade_type + 1) % HALO_GRENADE_COUNT;
+        if (u->grenades[other] > 0 || u->grenades[u->grenade_type] <= 0) u->grenade_type = (HaloGrenadeId)other;
+    }
+    if (u->grenade_timer <= 0.0f && u->grenades[u->grenade_type] <= 0) {
+        for (int g = 0; g < HALO_GRENADE_COUNT; g++) {
+            if (u->grenades[g] > 0) {
+                u->grenade_type = (HaloGrenadeId)g;
+                break;
+            }
+        }
+    }
+    HaloGrenadeId type = u->grenade_type;
+    const HaloGrenadeDef* gd = &g_halo_grenades[type];
+    if (u->control.grenade_pressed && u->grenade_timer <= 0.0f && u->grenades[type] > 0) {
         u->grenade_timer = gd->throw_delay;
         u->weapon.reload_timer = 0.0f; /* throwing cancels a reload */
         u->weapon.charge = 0.0f;
-        if (!(s->infinite_ammo && u->is_player)) u->grenades[HALO_GRENADE_PLASMA]--;
+        if (!(s->infinite_ammo && u->is_player)) u->grenades[type]--;
     }
     if (u->grenade_timer > 0.0f) {
         u->grenade_timer -= HALO_DT;
@@ -176,7 +237,9 @@ void halo_weapon_update(HaloSim* s, int ui) {
         if (w->overheated && w->heat <= wd->heat_recovery_threshold) w->overheated = 0;
     }
 
-    if (u->control.swap_pressed && u->holstered.id != HALO_WEAPON_NONE && u->grenade_timer <= 0.0f) {
+    if (update_arsenal(s, ui)) return;
+    if (!s->arsenal_enabled && u->control.swap_pressed && u->holstered.id != HALO_WEAPON_NONE &&
+        u->grenade_timer <= 0.0f) {
         HaloWeaponState tmp = u->holstered;
         u->holstered = *w;
         u->holstered.reload_timer = 0.0f;
@@ -193,11 +256,13 @@ void halo_weapon_update(HaloSim* s, int ui) {
         return;
     }
 
+    if (w->reload_timer > 0.0f && wd->reload_per_round && pressed && w->rounds_loaded > 0) {
+        w->reload_timer = 0.0f; /* pump-action: pull the trigger to stop loading shells */
+    }
     if (w->reload_timer > 0.0f) {
         w->reload_timer -= HALO_DT;
         if (w->reload_timer <= 0.0f) {
-            w->reload_timer = 0.0f;
-            finish_reload(s, ui);
+            w->reload_timer = finish_reload(s, ui) ? wd->reload_time : 0.0f;
         }
         w->trigger_was_down = down;
         return;

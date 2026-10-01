@@ -13,10 +13,10 @@
 
 #define D2R HC_DEG2RAD
 
-/*                                   bullet plasma overch explo  melee  fall */
-#define SHIELD_MULT_STANDARD        { 0.75f, 1.50f, 6.00f, 1.00f, 1.00f, 0.00f }
-#define BODY_MULT_STANDARD          { 1.00f, 0.80f, 0.50f, 1.00f, 1.00f, 1.00f }
-#define BODY_MULT_UNSHIELDED        { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f }
+/*                                   bullet plasma overch explo  melee  fall   fire   needle */
+#define SHIELD_MULT_STANDARD        { 0.75f, 1.50f, 6.00f, 1.00f, 1.00f, 0.00f, 0.60f, 0.50f }
+#define BODY_MULT_STANDARD          { 1.00f, 0.80f, 0.50f, 1.00f, 1.00f, 1.00f, 1.20f, 1.30f }
+#define BODY_MULT_UNSHIELDED        { 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.00f, 1.20f, 1.20f }
 
 const HaloProjectileDef g_halo_projectiles[HALO_PROJ_COUNT] = {
     [HALO_PROJ_AR_BULLET] = {
@@ -25,7 +25,44 @@ const HaloProjectileDef g_halo_projectiles[HALO_PROJ_COUNT] = {
         .air_gravity_scale = 0.0f,
         .maximum_range = 60.0f,
         .impact_damage = { HALO_DAMAGE_BULLET, 7.0f, 7.5f, 0, 0, 0.25f, 0 }, /* [approx] */
-        .render_rgba = 0xFFE27AFF, .render_size = 0.02f,
+        .render_style = HALO_RENDER_TRACER, .render_rgba = 0xFFE27AFF, .render_size = 0.02f,
+    },
+    [HALO_PROJ_PISTOL_BULLET] = {
+        .name = "pistol bullet",
+        .initial_velocity = 400.0f, .final_velocity = 400.0f, /* [approx] effectively hitscan */
+        .maximum_range = 100.0f,
+        /* [approx] the CE magnum: two shots strip a minor Elite, the third kills */
+        .impact_damage = { HALO_DAMAGE_BULLET, 34.0f, 38.0f, 0, 0, 0.6f, 1 },
+        .render_style = HALO_RENDER_TRACER, .render_rgba = 0xFFF2C0FF, .render_size = 0.015f,
+    },
+    [HALO_PROJ_SHOTGUN_PELLET] = {
+        .name = "shotgun pellet",
+        .initial_velocity = 150.0f, .final_velocity = 150.0f,
+        .maximum_range = 9.0f,  /* [approx] pellets are spent by ~25 m */
+        .impact_damage = { HALO_DAMAGE_BULLET, 9.0f, 11.0f, 0, 0, 0.5f, 0 },
+        .render_style = HALO_RENDER_TRACER, .render_rgba = 0xFFD890FF, .render_size = 0.01f,
+    },
+    [HALO_PROJ_SNIPER_BULLET] = {
+        .name = "sniper bullet",
+        .initial_velocity = 900.0f, .final_velocity = 900.0f,
+        .maximum_range = 250.0f,
+        .impact_damage = { HALO_DAMAGE_BULLET, 80.0f, 85.0f, 0, 0, 1.5f, 1 }, /* [approx] */
+        .render_style = HALO_RENDER_TRACER, .render_rgba = 0xD8F0FFFF, .render_size = 0.02f,
+    },
+    [HALO_PROJ_ROCKET] = {
+        .name = "rocket",
+        .initial_velocity = 18.0f, .final_velocity = 18.0f, /* [approx] slow enough to see coming */
+        .maximum_range = 120.0f,
+        .detonation_damage = { HALO_DAMAGE_EXPLOSION, 150.0f, 170.0f, 0.6f, 2.6f, 5.0f, 0 }, /* [approx] */
+        .render_style = HALO_RENDER_ROCKET, .render_rgba = 0xFFB040FF, .render_size = 0.05f,
+    },
+    [HALO_PROJ_FLAME] = {
+        .name = "flame",
+        .initial_velocity = 7.0f, .final_velocity = 7.0f,
+        .air_gravity_scale = -0.08f, /* hot gas drifts up */
+        .maximum_range = 3.6f,
+        .impact_damage = { HALO_DAMAGE_FIRE, 5.0f, 6.0f, 0, 0, 0.0f, 0 }, /* [approx] */
+        .render_style = HALO_RENDER_FLAME, .render_rgba = 0xFF8A30FF, .render_size = 0.08f,
     },
     [HALO_PROJ_PLASMA_PISTOL_BOLT] = {
         .name = "plasma pistol bolt",
@@ -33,7 +70,7 @@ const HaloProjectileDef g_halo_projectiles[HALO_PROJ_COUNT] = {
         .air_gravity_scale = 0.0f,
         .maximum_range = 30.0f,
         .impact_damage = { HALO_DAMAGE_PLASMA, 7.0f, 8.0f, 0, 0, 0.2f, 0 }, /* [approx] */
-        .render_rgba = 0x7CFF6AFF, .render_size = 0.05f,
+        .render_style = HALO_RENDER_BOLT, .render_rgba = 0x7CFF6AFF, .render_size = 0.05f,
     },
     [HALO_PROJ_PLASMA_PISTOL_CHARGED] = {
         .name = "plasma pistol overcharge",
@@ -42,7 +79,35 @@ const HaloProjectileDef g_halo_projectiles[HALO_PROJ_COUNT] = {
         .maximum_range = 30.0f,
         .guided_angular_velocity = D2R(100.0f), /* [approx] tracks its target */
         .impact_damage = { HALO_DAMAGE_PLASMA_OVERCHARGE, 18.0f, 20.0f, 0, 0, 1.0f, 0 }, /* [approx] */
-        .render_rgba = 0xB4FF9CFF, .render_size = 0.11f,
+        .render_style = HALO_RENDER_BOLT, .render_rgba = 0xB4FF9CFF, .render_size = 0.11f,
+    },
+    [HALO_PROJ_PLASMA_RIFLE_BOLT] = {
+        .name = "plasma rifle bolt",
+        .initial_velocity = 30.0f, .final_velocity = 30.0f, /* [approx] */
+        .maximum_range = 40.0f,
+        .impact_damage = { HALO_DAMAGE_PLASMA, 9.0f, 11.0f, 0, 0, 0.3f, 0 }, /* [approx] */
+        .render_style = HALO_RENDER_BOLT, .render_rgba = 0x6AC8FFFF, .render_size = 0.05f,
+    },
+    [HALO_PROJ_NEEDLE] = {
+        .name = "needle",
+        .initial_velocity = 24.0f, .final_velocity = 24.0f, /* [approx] */
+        .maximum_range = 30.0f,
+        .guided_angular_velocity = D2R(160.0f), /* [approx] homes hard */
+        .attaches_to_units = 1,
+        .detonation_timer_attached = 0.75f,
+        .impact_damage = { HALO_DAMAGE_NEEDLE, 4.0f, 5.0f, 0, 0, 0.1f, 0 },
+        .detonation_damage = { HALO_DAMAGE_NEEDLE, 9.0f, 11.0f, 0, 0, 0.4f, 0 },
+        .supercombine_count = 7, /* [approx] CE pops at 7 */
+        .supercombine_damage = { HALO_DAMAGE_EXPLOSION, 80.0f, 90.0f, 0.3f, 1.0f, 3.0f, 0 },
+        .render_style = HALO_RENDER_NEEDLE, .render_rgba = 0xFF5AD2FF, .render_size = 0.03f,
+    },
+    [HALO_PROJ_FUEL_ROD] = {
+        .name = "fuel rod",
+        .initial_velocity = 14.0f, .final_velocity = 14.0f, /* [approx] lobbed */
+        .air_gravity_scale = 0.35f,
+        .maximum_range = 80.0f,
+        .detonation_damage = { HALO_DAMAGE_EXPLOSION, 100.0f, 120.0f, 0.4f, 2.0f, 3.5f, 0 }, /* [approx] */
+        .render_style = HALO_RENDER_BOLT, .render_rgba = 0x7CFF3CFF, .render_size = 0.09f,
     },
     [HALO_PROJ_PLASMA_GRENADE] = {
         .name = "plasma grenade",
@@ -53,7 +118,16 @@ const HaloProjectileDef g_halo_projectiles[HALO_PROJ_COUNT] = {
         .detonation_timer = 3.0f,          /* [approx] armed when thrown */
         .detonation_timer_attached = 1.6f, /* [approx] after it sticks */
         .detonation_damage = { HALO_DAMAGE_EXPLOSION, 100.0f, 120.0f, 0.35f, 1.6f, 2.2f, 0 }, /* [approx] */
-        .render_rgba = 0x6CB6FFFF, .render_size = 0.06f,
+        .render_style = HALO_RENDER_GRENADE, .render_rgba = 0x6CB6FFFF, .render_size = 0.06f,
+    },
+    [HALO_PROJ_FRAG_GRENADE] = {
+        .name = "fragmentation grenade",
+        .air_gravity_scale = 1.0f,
+        .maximum_range = 1000.0f,
+        .detonation_timer = 2.2f,          /* [approx] fused on the throw */
+        .bounce_restitution = 0.45f,
+        .detonation_damage = { HALO_DAMAGE_EXPLOSION, 110.0f, 130.0f, 0.4f, 2.2f, 3.0f, 0 }, /* [approx] */
+        .render_style = HALO_RENDER_GRENADE, .render_rgba = 0x7A9A5AFF, .render_size = 0.035f,
     },
 };
 
@@ -76,6 +150,85 @@ const HaloWeaponDef g_halo_weapons[HALO_WEAPON_COUNT] = {
             .charged_projectile = HALO_PROJ_AR_BULLET,
         },
         .fp_offset = { 0.11f, -0.055f, -0.07f },
+    },
+    [HALO_WEAPON_PISTOL] = {
+        .name = "M6D Pistol", .hud_name = "PISTOL",
+        .rounds_loaded_maximum = 12, .rounds_total_initial = 48, .rounds_total_maximum = 120,
+        .reload_time = 1.4f, .ready_time = 0.4f, /* [approx] */
+        .autoaim_angle = D2R(1.5f), .magnetism_range = 25.0f,
+        .zoom_levels = 1, .zoom_magnification = { 2.0f },
+        .trigger = {
+            .initial_rate_of_fire = 3.5f, .final_rate_of_fire = 3.5f, /* [approx] trigger-pull cap */
+            .automatic = 0, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .error_acceleration_time = 0.3f, .error_deceleration_time = 0.4f,
+            .projectile_error_angle_lower_bound = D2R(0.2f),
+            .projectile_error_angle_upper_bound = D2R(1.5f),
+            .projectile = HALO_PROJ_PISTOL_BULLET,
+            .charged_projectile = HALO_PROJ_PISTOL_BULLET,
+        },
+        .fp_offset = { 0.10f, -0.05f, -0.06f },
+    },
+    [HALO_WEAPON_SHOTGUN] = {
+        .name = "M90 Shotgun", .hud_name = "SHOTGUN",
+        .rounds_loaded_maximum = 12, .rounds_total_initial = 36, .rounds_total_maximum = 60,
+        .reload_time = 0.45f, .reload_per_round = 1, .ready_time = 0.6f, /* [approx] */
+        .autoaim_angle = D2R(3.0f), .magnetism_range = 6.0f,
+        .trigger = {
+            .initial_rate_of_fire = 1.3f, .final_rate_of_fire = 1.3f, /* [approx] pump */
+            .automatic = 0, .rounds_per_shot = 1, .projectiles_per_shot = 15,
+            .projectile_error_angle_lower_bound = D2R(7.0f),
+            .projectile_error_angle_upper_bound = D2R(7.0f),
+            .projectile = HALO_PROJ_SHOTGUN_PELLET,
+            .charged_projectile = HALO_PROJ_SHOTGUN_PELLET,
+        },
+        .fp_offset = { 0.12f, -0.055f, -0.07f },
+    },
+    [HALO_WEAPON_SNIPER_RIFLE] = {
+        .name = "S2 AM Sniper Rifle", .hud_name = "SNIPER RIFLE",
+        .rounds_loaded_maximum = 4, .rounds_total_initial = 24, .rounds_total_maximum = 24,
+        .reload_time = 2.5f, .ready_time = 0.7f, /* [approx] */
+        .autoaim_angle = D2R(0.6f), .magnetism_range = 80.0f,
+        .zoom_levels = 2, .zoom_magnification = { 2.0f, 8.0f },
+        .trigger = {
+            .initial_rate_of_fire = 1.6f, .final_rate_of_fire = 1.6f, /* [approx] bolt cycle */
+            .automatic = 0, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .error_acceleration_time = 0.2f, .error_deceleration_time = 0.6f,
+            .projectile_error_angle_lower_bound = D2R(0.05f),
+            .projectile_error_angle_upper_bound = D2R(0.5f),
+            .projectile = HALO_PROJ_SNIPER_BULLET,
+            .charged_projectile = HALO_PROJ_SNIPER_BULLET,
+        },
+        .fp_offset = { 0.14f, -0.05f, -0.06f },
+    },
+    [HALO_WEAPON_ROCKET_LAUNCHER] = {
+        .name = "M19 SSM Rocket Launcher", .hud_name = "ROCKET LAUNCHER",
+        .rounds_loaded_maximum = 2, .rounds_total_initial = 6, .rounds_total_maximum = 8,
+        .reload_time = 2.8f, .ready_time = 0.9f, /* [approx] */
+        .zoom_levels = 1, .zoom_magnification = { 2.0f },
+        .trigger = {
+            .initial_rate_of_fire = 1.1f, .final_rate_of_fire = 1.1f,
+            .automatic = 0, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .projectile_error_angle_lower_bound = D2R(0.3f),
+            .projectile_error_angle_upper_bound = D2R(0.3f),
+            .projectile = HALO_PROJ_ROCKET,
+            .charged_projectile = HALO_PROJ_ROCKET,
+        },
+        .fp_offset = { 0.12f, -0.06f, -0.05f },
+    },
+    [HALO_WEAPON_FLAMETHROWER] = {
+        .name = "M7057 Flamethrower", .hud_name = "FLAMETHROWER",
+        .rounds_loaded_maximum = 100, .rounds_total_initial = 300, .rounds_total_maximum = 600,
+        .reload_time = 3.0f, .ready_time = 0.8f, /* [approx] Halo PC */
+        .trigger = {
+            .initial_rate_of_fire = 18.0f, .final_rate_of_fire = 18.0f,
+            .automatic = 1, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .error_acceleration_time = 0.5f, .error_deceleration_time = 0.5f,
+            .projectile_error_angle_lower_bound = D2R(4.0f),
+            .projectile_error_angle_upper_bound = D2R(6.0f),
+            .projectile = HALO_PROJ_FLAME,
+            .charged_projectile = HALO_PROJ_FLAME,
+        },
+        .fp_offset = { 0.12f, -0.06f, -0.07f },
     },
     [HALO_WEAPON_PLASMA_PISTOL] = {
         .name = "Plasma Pistol", .hud_name = "PLASMA PISTOL",
@@ -100,6 +253,58 @@ const HaloWeaponDef g_halo_weapons[HALO_WEAPON_COUNT] = {
         },
         .fp_offset = { 0.10f, -0.05f, -0.06f },
     },
+    [HALO_WEAPON_PLASMA_RIFLE] = {
+        .name = "Plasma Rifle", .hud_name = "PLASMA RIFLE",
+        .rounds_loaded_maximum = 0,
+        .heat_recovery_threshold = 0.3f, .heat_overheated_threshold = 1.0f, /* [approx] */
+        .heat_loss_per_second = 0.4f,
+        .battery_per_round = 0.0025f,
+        .ready_time = 0.5f,
+        .autoaim_angle = D2R(2.0f), .magnetism_range = 14.0f,
+        .trigger = {
+            .initial_rate_of_fire = 6.0f, .final_rate_of_fire = 10.0f, /* [approx] spins up */
+            .rate_of_fire_acceleration_time = 0.6f,
+            .automatic = 1, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .error_acceleration_time = 1.0f, .error_deceleration_time = 0.4f,
+            .projectile_error_angle_lower_bound = D2R(0.5f),
+            .projectile_error_angle_upper_bound = D2R(3.5f),
+            .heat_generated_per_round = 0.045f, /* [approx] ~2 s of fire to overheat */
+            .projectile = HALO_PROJ_PLASMA_RIFLE_BOLT,
+            .charged_projectile = HALO_PROJ_PLASMA_RIFLE_BOLT,
+        },
+        .fp_offset = { 0.11f, -0.05f, -0.06f },
+    },
+    [HALO_WEAPON_NEEDLER] = {
+        .name = "Needler", .hud_name = "NEEDLER",
+        .rounds_loaded_maximum = 20, .rounds_total_initial = 80, .rounds_total_maximum = 80,
+        .reload_time = 2.0f, .ready_time = 0.5f, /* [approx] */
+        .autoaim_angle = D2R(7.0f), .magnetism_range = 14.0f, /* wide cone: needles pick a target */
+        .trigger = {
+            .initial_rate_of_fire = 8.0f, .final_rate_of_fire = 8.0f,
+            .automatic = 1, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .error_acceleration_time = 0.5f, .error_deceleration_time = 0.5f,
+            .projectile_error_angle_lower_bound = D2R(1.0f),
+            .projectile_error_angle_upper_bound = D2R(4.0f),
+            .projectile = HALO_PROJ_NEEDLE,
+            .charged_projectile = HALO_PROJ_NEEDLE,
+        },
+        .fp_offset = { 0.11f, -0.055f, -0.065f },
+    },
+    [HALO_WEAPON_FUEL_ROD] = {
+        .name = "Fuel Rod Gun", .hud_name = "FUEL ROD GUN",
+        .rounds_loaded_maximum = 5, .rounds_total_initial = 15, .rounds_total_maximum = 25,
+        .reload_time = 2.4f, .ready_time = 0.8f, /* [approx] Halo PC */
+        .zoom_levels = 1, .zoom_magnification = { 2.0f },
+        .trigger = {
+            .initial_rate_of_fire = 2.2f, .final_rate_of_fire = 2.2f,
+            .automatic = 0, .rounds_per_shot = 1, .projectiles_per_shot = 1,
+            .projectile_error_angle_lower_bound = D2R(0.5f),
+            .projectile_error_angle_upper_bound = D2R(1.5f),
+            .projectile = HALO_PROJ_FUEL_ROD,
+            .charged_projectile = HALO_PROJ_FUEL_ROD,
+        },
+        .fp_offset = { 0.12f, -0.06f, -0.06f },
+    },
 };
 
 const HaloGrenadeDef g_halo_grenades[HALO_GRENADE_COUNT] = {
@@ -109,6 +314,14 @@ const HaloGrenadeDef g_halo_grenades[HALO_GRENADE_COUNT] = {
         .throw_velocity = 6.0f,             /* [approx] ~10 wu range on flat ground */
         .throw_pitch_bias = D2R(12.0f),     /* [approx] */
         .throw_delay = 0.25f,
+        .maximum_count = 4,
+    },
+    [HALO_GRENADE_FRAG] = {
+        .name = "frag grenade",
+        .projectile = HALO_PROJ_FRAG_GRENADE,
+        .throw_velocity = 7.0f,             /* [approx] frags fly a bit further */
+        .throw_pitch_bias = D2R(10.0f),
+        .throw_delay = 0.2f,
         .maximum_count = 4,
     },
 };
@@ -166,6 +379,21 @@ const HaloBipedDef g_halo_bipeds[HALO_BIPED_COUNT] = {
         .shield_damage_multiplier = SHIELD_MULT_STANDARD,
         .body_damage_multiplier = BODY_MULT_STANDARD,
     },
+    [HALO_BIPED_VILLAGER] = {
+        /* Not a Halo biped: a hit volume wrapped around an Animal Crossing NPC.
+         * AC villagers are about 30 AC units wide and 36 tall (~0.74 wu); the
+         * big head is over half of that. The host moves it; the sim never does. */
+        .name = "villager",
+        .standing_camera_height = 0.55f, .crouching_camera_height = 0.55f,
+        .standing_collision_height = 0.74f, .crouching_collision_height = 0.74f,
+        .collision_radius = 0.24f,
+        .head_height_fraction = 0.52f,
+        .maximum_body_vitality = 40.0f,
+        .maximum_shield_vitality = 0.0f,
+        .head_damage_multiplier = 2.0f,
+        .shield_damage_multiplier = SHIELD_MULT_STANDARD,
+        .body_damage_multiplier = BODY_MULT_UNSHIELDED,
+    },
 };
 
 /* All [approx]: CE actor tags are not present in the reference repos. */
@@ -194,7 +422,7 @@ const HaloActorDef g_halo_actors[HALO_ACTOR_TYPE_COUNT] = {
     [HALO_ACTOR_ELITE] = {
         .name = "elite",
         .biped = HALO_BIPED_ELITE,
-        .weapon = HALO_WEAPON_PLASMA_PISTOL,
+        .weapon = HALO_WEAPON_PLASMA_RIFLE,
         .plasma_grenades = 2,
         .vision_range = 14.0f, .vision_half_angle = D2R(70.0f),
         .hearing_range = 18.0f,

@@ -78,6 +78,7 @@ int halo_ai_pick_target(HaloSim* s, int ui) {
     float best_d = 1e9f;
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         if (i == ui || !halo_unit_alive(s, i) || s->units[i].team == s->units[ui].team) continue;
+        if (s->units[i].team == HALO_TEAM_NEUTRAL) continue;
         float d;
         if (can_see(s, ui, i, &d) && d < best_d) {
             best_d = d;
@@ -278,7 +279,7 @@ static void update_combat(HaloSim* s, int ui) {
     update_melee(s, ui, dist);
 
     a->grenade_cooldown -= HALO_DT;
-    if (a->target_visible && a->grenade_cooldown <= 0.0f && u->grenades[HALO_GRENADE_PLASMA] > 0 && dist > 3.0f &&
+    if (a->target_visible && a->grenade_cooldown <= 0.0f && u->grenades[u->grenade_type] > 0 && dist > 3.0f &&
         dist < 9.0f && halo_randf(s) < ad->grenade_chance * HALO_DT) {
         u->control.grenade_pressed = 1;
         a->grenade_cooldown = halo_rand_range(s, 6.0f, 10.0f);

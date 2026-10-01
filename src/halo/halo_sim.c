@@ -89,7 +89,8 @@ static int alloc_unit(HaloSim* s) {
     int best = -1;
     float best_time = -1.0f;
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
-        if (s->units[i].dead && !s->units[i].is_player && s->units[i].dead_time > best_time) {
+        const HaloUnit* u = &s->units[i];
+        if (u->dead && !u->is_player && !u->kinematic && u->dead_time > best_time) {
             best = i;
             best_time = s->units[i].dead_time;
         }
@@ -126,6 +127,14 @@ int halo_spawn_player(HaloSim* s, hv3 pos, float yaw) {
     if (i < 0) return -1;
     HaloUnit* u = &s->units[i];
     u->is_player = 1;
+    s->player = i;
+    s->player_spawn = pos;
+    s->player_spawn_yaw = yaw;
+    s->player_respawn_timer = 0.0f;
+    if (s->arsenal_enabled) {
+        halo_give_arsenal(s);
+        return i;
+    }
     halo_give_weapon(s, i, HALO_WEAPON_ASSAULT_RIFLE);
     halo_give_weapon(s, i, HALO_WEAPON_PLASMA_PISTOL);
     /* Start holding the rifle; the pistol goes to the back. */
@@ -136,11 +145,43 @@ int halo_spawn_player(HaloSim* s, hv3 pos, float yaw) {
     }
     u->weapon.ready_timer = 0.0f;
     u->grenades[HALO_GRENADE_PLASMA] = 2;
-    s->player = i;
-    s->player_spawn = pos;
-    s->player_spawn_yaw = yaw;
-    s->player_respawn_timer = 0.0f;
     return i;
+}
+
+void halo_give_arsenal(HaloSim* s) {
+    s->arsenal_enabled = 1;
+    HaloUnit* u = halo_player(s);
+    HaloWeaponId held = (u && u->weapon.id != HALO_WEAPON_NONE) ? u->weapon.id : HALO_WEAPON_ASSAULT_RIFLE;
+    for (int w = 0; w < HALO_WEAPON_COUNT; w++) {
+        halo_weapon_init(&s->arsenal[w], (HaloWeaponId)w);
+        s->arsenal_owned[w] = 1;
+    }
+    if (s->arsenal_last < 0 || s->arsenal_last >= HALO_WEAPON_COUNT || s->arsenal_last == held)
+        s->arsenal_last = held == HALO_WEAPON_PISTOL ? HALO_WEAPON_ASSAULT_RIFLE : HALO_WEAPON_PISTOL;
+    if (!u) return;
+    u->weapon = s->arsenal[held];
+    u->holstered.id = HALO_WEAPON_NONE;
+    for (int g = 0; g < HALO_GRENADE_COUNT; g++) u->grenades[g] = g_halo_grenades[g].maximum_count;
+}
+
+int halo_spawn_proxy(HaloSim* s, HaloBipedId biped, HaloTeam team, hv3 pos, float yaw) {
+    int i = spawn_unit(s, biped, team, pos, yaw);
+    if (i < 0) return -1;
+    s->units[i].kinematic = 1;
+    s->units[i].grounded = 1;
+    return i;
+}
+
+void halo_revive_unit(HaloSim* s, int ui) {
+    if (ui < 0 || ui >= HALO_MAX_UNITS || !s->units[ui].active) return;
+    HaloUnit* u = &s->units[ui];
+    const HaloBipedDef* d = halo_unit_def(u);
+    u->dead = 0;
+    u->dead_time = 0.0f;
+    u->body = d->maximum_body_vitality;
+    u->shield = d->maximum_shield_vitality;
+    u->hurt_flash = 0.0f;
+    u->serial = ++s->next_serial; /* drops anything still stuck to the old body */
 }
 
 int halo_spawn_actor(HaloSim* s, HaloActorTypeId type, hv3 pos, float yaw) {
@@ -209,8 +250,25 @@ int halo_count_living(const HaloSim* s, HaloTeam team) {
     return n;
 }
 
+static void clear_latches(HaloUnit* u) {
+    u->control.jump_pressed = 0;
+    u->control.reload_pressed = 0;
+    u->control.grenade_pressed = 0;
+    u->control.swap_pressed = 0;
+    u->control.weapon_cycle = 0;
+    u->control.weapon_select = 0;
+    u->control.grenade_cycle_pressed = 0;
+}
+
 static void update_unit(HaloSim* s, int ui) {
     HaloUnit* u = &s->units[ui];
+    if (u->kinematic) {
+        if (u->dead) u->dead_time += HALO_DT;
+        halo_damage_update(s, ui);
+        u->last_damage_age += HALO_DT;
+        clear_latches(u);
+        return;
+    }
     if (u->dead) {
         u->dead_time += HALO_DT;
         /* Corpses still fall and slide to rest. */
@@ -238,11 +296,18 @@ static void update_unit(HaloSim* s, int ui) {
     halo_weapon_update(s, ui);
     halo_damage_update(s, ui);
 
-    u->control.jump_pressed = 0;
-    u->control.reload_pressed = 0;
-    u->control.grenade_pressed = 0;
-    u->control.swap_pressed = 0;
+    clear_latches(u);
     u->last_damage_age += HALO_DT;
+}
+
+/* Far-off idle squads skip AI and physics until something wakes them
+ * (noise, damage) or the player walks into range. */
+static int is_dormant(const HaloSim* s, int i) {
+    if (s->ai_activation_range <= 0.0f || !s->ai[i].active || s->ai[i].state != HALO_AI_IDLE) return 0;
+    const HaloUnit* p = (s->player >= 0 && s->units[s->player].active) ? &s->units[s->player] : NULL;
+    if (!p) return 0;
+    float dx = s->units[i].pos.x - p->pos.x, dy = s->units[i].pos.y - p->pos.y;
+    return dx * dx + dy * dy > s->ai_activation_range * s->ai_activation_range;
 }
 
 void halo_sim_tick(HaloSim* s) {
@@ -259,21 +324,29 @@ void halo_sim_tick(HaloSim* s) {
         if (s->projectiles[i].active) s->projectiles[i].prev_pos = s->projectiles[i].pos;
     }
 
+    unsigned char dormant[HALO_MAX_UNITS];
+    s->dormant_count = 0;
+    for (int i = 0; i < HALO_MAX_UNITS; i++) {
+        dormant[i] = s->units[i].active && !s->units[i].dead && is_dormant(s, i);
+        s->dormant_count += dormant[i];
+    }
+
     if (!s->ai_frozen) {
         for (int i = 0; i < HALO_MAX_UNITS; i++) {
-            if (s->units[i].active && s->ai[i].active) halo_ai_update(s, i);
+            if (s->units[i].active && s->ai[i].active && !dormant[i]) halo_ai_update(s, i);
         }
     }
 
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
-        if (s->units[i].active) update_unit(s, i);
+        if (s->units[i].active && !dormant[i]) update_unit(s, i);
     }
 
     halo_projectiles_update(s);
 
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         HaloUnit* u = &s->units[i];
-        if (u->active && u->dead && !u->is_player && u->dead_time > HALO_CORPSE_TIME) halo_remove_unit(s, i);
+        if (u->active && u->dead && !u->is_player && !u->kinematic && u->dead_time > HALO_CORPSE_TIME)
+            halo_remove_unit(s, i);
     }
 
     if (s->player >= 0 && s->units[s->player].dead) {

@@ -10,14 +10,15 @@
 #include "halo_world.h"
 #include "hc_vec.h"
 
-#define HALO_MAX_UNITS 32
-#define HALO_MAX_PROJECTILES 192
-#define HALO_MAX_EVENTS 128
+#define HALO_MAX_UNITS 96
+#define HALO_MAX_PROJECTILES 384
+#define HALO_MAX_EVENTS 256
 #define HALO_AI_MAX_PATH 24
 
 typedef enum HaloTeam {
     HALO_TEAM_HUMAN,
     HALO_TEAM_COVENANT,
+    HALO_TEAM_NEUTRAL,        /* bystanders: anyone can hurt them, AI never targets them */
     HALO_TEAM_COUNT
 } HaloTeam;
 
@@ -32,7 +33,10 @@ typedef struct HaloUnitControl {
     int jump_pressed;
     int reload_pressed;
     int grenade_pressed;
-    int swap_pressed;
+    int swap_pressed;         /* back to the previous weapon (arsenal) or the holstered one */
+    int weapon_cycle;         /* arsenal: +1 next / -1 previous */
+    int weapon_select;        /* arsenal: weapon id + 1, 0 = none */
+    int grenade_cycle_pressed;
 } HaloUnitControl;
 
 typedef struct HaloWeaponState {
@@ -124,9 +128,11 @@ typedef struct HaloUnit {
     HaloWeaponState weapon;
     HaloWeaponState holstered; /* second slot */
     int grenades[HALO_GRENADE_COUNT];
+    HaloGrenadeId grenade_type; /* which kind the grenade button throws */
     float grenade_timer;      /* > 0: winding up a throw */
     HaloUnitControl control;
     float move_anim;          /* render: walk cycle phase */
+    int kinematic;            /* host moves it (AC villagers); never recycled or removed */
 } HaloUnit;
 
 typedef struct HaloProjectile {
@@ -151,7 +157,7 @@ typedef struct HaloProjectile {
 typedef enum HaloEventType {
     HALO_EV_WEAPON_FIRED,     /* unit, pos, def = weapon id */
     HALO_EV_PROJECTILE_IMPACT,/* pos, dir = surface normal, def = projectile id, other = unit hit or -1 */
-    HALO_EV_EXPLOSION,        /* pos, value = outer radius */
+    HALO_EV_EXPLOSION,        /* pos, def = projectile id, other = carrier or -1, value = outer radius (0 = none) */
     HALO_EV_UNIT_DAMAGED,     /* unit, other = attacker, value = total damage */
     HALO_EV_SHIELD_DEPLETED,  /* unit */
     HALO_EV_SHIELD_RECHARGE,  /* unit */
@@ -162,6 +168,7 @@ typedef enum HaloEventType {
     HALO_EV_OVERHEAT,         /* unit */
     HALO_EV_AI_ALERTED,       /* unit */
     HALO_EV_AI_PANIC,         /* unit */
+    HALO_EV_WEAPON_SWITCHED,  /* unit, def = new weapon id */
     HALO_EV_COUNT
 } HaloEventType;
 
@@ -193,6 +200,15 @@ typedef struct HaloSim {
     float accumulator;
     float alpha;              /* interpolation factor for rendering, 0..1 */
     int next_serial;
+    /* The player's full arsenal: every weapon carried at once, scrolled
+     * through instead of Halo's two-slot limit. Inactive slots live here. */
+    int arsenal_enabled;
+    int arsenal_owned[HALO_WEAPON_COUNT];
+    HaloWeaponState arsenal[HALO_WEAPON_COUNT];
+    HaloWeaponId arsenal_last;
+    /* Idle AI farther than this from the player sleep (0 = never). */
+    float ai_activation_range;
+    int dormant_count;
     /* cheats / debug */
     int infinite_shields;
     int infinite_ammo;
@@ -215,6 +231,11 @@ void halo_damage_unit(HaloSim* sim, int victim, int attacker, const HaloDamageEf
                       hv3 toward_attacker, int head);
 void halo_remove_unit(HaloSim* sim, int unit);
 void halo_give_weapon(HaloSim* sim, int unit, HaloWeaponId weapon);
+/* Hands the player every weapon, full ammo and grenades, and keeps doing so on respawn. */
+void halo_give_arsenal(HaloSim* sim);
+/* A kinematic, AI-less unit the host positions every frame (pos/yaw). */
+int halo_spawn_proxy(HaloSim* sim, HaloBipedId biped, HaloTeam team, hv3 pos, float yaw);
+void halo_revive_unit(HaloSim* sim, int unit);
 int halo_count_living(const HaloSim* sim, HaloTeam team);
 
 HaloUnit* halo_player(HaloSim* sim);

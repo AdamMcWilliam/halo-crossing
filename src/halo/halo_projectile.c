@@ -89,27 +89,55 @@ int halo_line_of_sight(HaloSim* s, hv3 from, hv3 to) {
     return !w->raycast(w->ctx, from, to, &hit);
 }
 
+static void blast(HaloSim* s, hv3 at, int owner, int carrier, int def, const HaloDamageEffectDef* e) {
+    if (halo_unit_alive(s, carrier)) {
+        /* A stuck grenade is lethal to its carrier regardless of falloff. */
+        halo_damage_unit(s, carrier, owner, e, 1.0f, hv3_make(0, 0, 1), 0);
+    }
+    float radius = e->radius_outer;
+    if (radius > 0.0f) {
+        halo_area_damage(s, at, owner, e);
+        halo_ai_notify_noise(s, at, 20.0f, owner);
+    }
+    /* Always emitted so hosts can draw needle pops too; value 0 = no area damage. */
+    halo_emit(s, HALO_EV_EXPLOSION, at, hv3_make(0, 0, 1), owner, carrier, def, radius);
+}
+
 static void detonate(HaloSim* s, int pi) {
     HaloProjectile* p = &s->projectiles[pi];
     const HaloProjectileDef* pd = &g_halo_projectiles[p->def];
-    hv3 at = p->pos;
-    if (p->attached_unit >= 0 && halo_unit_alive(s, p->attached_unit)) {
-        /* A stuck grenade is lethal to its carrier regardless of falloff. */
-        halo_damage_unit(s, p->attached_unit, p->owner, &pd->detonation_damage, 1.0f,
-                         hv3_make(0, 0, 1), 0);
-    }
-    if (pd->detonation_damage.radius_outer > 0.0f) {
-        halo_area_damage(s, at, p->owner, &pd->detonation_damage);
-        halo_emit(s, HALO_EV_EXPLOSION, at, hv3_make(0, 0, 1), p->owner, -1, p->def,
-                  pd->detonation_damage.radius_outer);
-        halo_ai_notify_noise(s, at, 20.0f, p->owner);
-    }
+    blast(s, p->pos, p->owner, p->attached_unit, p->def, &pd->detonation_damage);
     p->active = 0;
 }
 
-static void stick(HaloSim* s, int pi, int unit, hv3 at) {
+/* Needler: enough needles in one body go off together. */
+static int try_supercombine(HaloSim* s, int pi) {
     HaloProjectile* p = &s->projectiles[pi];
     const HaloProjectileDef* pd = &g_halo_projectiles[p->def];
+    if (pd->supercombine_count <= 0 || p->attached_unit < 0) return 0;
+    int n = 0;
+    for (int i = 0; i < HALO_MAX_PROJECTILES; i++) {
+        const HaloProjectile* q = &s->projectiles[i];
+        if (q->active && q->def == p->def && q->attached_unit == p->attached_unit &&
+            q->attached_serial == p->attached_serial)
+            n++;
+    }
+    if (n < pd->supercombine_count) return 0;
+    int unit = p->attached_unit;
+    int serial = p->attached_serial;
+    for (int i = 0; i < HALO_MAX_PROJECTILES; i++) {
+        HaloProjectile* q = &s->projectiles[i];
+        if (q->active && q->def == p->def && q->attached_unit == unit && q->attached_serial == serial)
+            q->active = 0;
+    }
+    blast(s, halo_unit_center(&s->units[unit]), p->owner, unit, p->def, &pd->supercombine_damage);
+    return 1;
+}
+
+static void stick(HaloSim* s, int pi, int unit, hv3 at, int head) {
+    HaloProjectile* p = &s->projectiles[pi];
+    const HaloProjectileDef* pd = &g_halo_projectiles[p->def];
+    hv3 back = hv3_norm(hv3_scale(p->vel, -1.0f));
     p->vel = hv3_make(0, 0, 0);
     p->pos = at;
     if (unit >= 0) {
@@ -120,8 +148,27 @@ static void stick(HaloSim* s, int pi, int unit, hv3 at) {
         p->stuck = 1;
     }
     if (p->timer < 0.0f || p->timer > pd->detonation_timer_attached) p->timer = pd->detonation_timer_attached;
-    halo_emit(s, HALO_EV_GRENADE_STUCK, at, hv3_make(0, 0, 1), p->owner, unit, p->def, 0.0f);
-    if (unit >= 0) halo_ai_notify_grenade_stuck(s, unit);
+    if (pd->render_style == HALO_RENDER_GRENADE) {
+        halo_emit(s, HALO_EV_GRENADE_STUCK, at, hv3_make(0, 0, 1), p->owner, unit, p->def, 0.0f);
+        if (unit >= 0) halo_ai_notify_grenade_stuck(s, unit);
+    } else if (unit >= 0) {
+        halo_emit(s, HALO_EV_PROJECTILE_IMPACT, at, back, p->owner, unit, p->def, 0.0f);
+    }
+    if (unit >= 0 && pd->impact_damage.damage_upper_bound > 0.0f)
+        halo_damage_unit(s, unit, p->owner, &pd->impact_damage, 1.0f, back, head);
+    if (unit >= 0 && p->active) try_supercombine(s, pi);
+}
+
+/* Frags: reflect off the surface, settle once slow on something floor-like. */
+static void bounce(HaloProjectile* p, const HaloProjectileDef* pd, hv3 point, hv3 normal) {
+    float vn = hv3_dot(p->vel, normal);
+    hv3 vt = hv3_sub(p->vel, hv3_scale(normal, vn));
+    p->vel = hv3_add(hv3_scale(vt, 0.7f), hv3_scale(normal, -vn * pd->bounce_restitution));
+    p->pos = hv3_mad(point, normal, 0.02f);
+    if (normal.z > 0.5f && hv3_len(p->vel) < 0.6f) {
+        p->vel = hv3_make(0, 0, 0);
+        p->stuck = 1;
+    }
 }
 
 static void steer(HaloSim* s, HaloProjectile* p, const HaloProjectileDef* pd) {
@@ -195,11 +242,17 @@ void halo_projectiles_update(HaloSim* s) {
         if (hit_unit >= 0 && tu <= tw) {
             hv3 at = hv3_lerp(p->pos, next, tu);
             if (pd->attaches_to_units) {
-                stick(s, i, hit_unit, at);
+                stick(s, i, hit_unit, at, head);
+                continue;
+            }
+            if (pd->bounce_restitution > 0.0f) {
+                /* Glance off the body rather than stopping dead in it. */
+                p->vel = hv3_make(-p->vel.x * 0.3f, -p->vel.y * 0.3f, p->vel.z * 0.5f);
                 continue;
             }
             hv3 back = hv3_norm(hv3_scale(p->vel, -1.0f));
-            halo_damage_unit(s, hit_unit, p->owner, &pd->impact_damage, 1.0f, back, head);
+            if (pd->impact_damage.damage_upper_bound > 0.0f)
+                halo_damage_unit(s, hit_unit, p->owner, &pd->impact_damage, 1.0f, back, head);
             halo_emit(s, HALO_EV_PROJECTILE_IMPACT, at, back, p->owner, hit_unit, p->def, 0.0f);
             if (pd->detonation_damage.radius_outer > 0.0f) {
                 p->pos = at;
@@ -211,7 +264,11 @@ void halo_projectiles_update(HaloSim* s) {
         }
         if (tw <= 1.0f) {
             if (pd->attaches_to_world) {
-                stick(s, i, -1, hv3_mad(wh.point, wh.normal, 0.02f));
+                stick(s, i, -1, hv3_mad(wh.point, wh.normal, 0.02f), 0);
+                continue;
+            }
+            if (pd->bounce_restitution > 0.0f) {
+                bounce(p, pd, wh.point, wh.normal);
                 continue;
             }
             halo_emit(s, HALO_EV_PROJECTILE_IMPACT, wh.point, wh.normal, p->owner, -1, p->def, 0.0f);
