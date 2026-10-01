@@ -16,11 +16,14 @@
 #include "hc_draw.h"
 #include "hc_gfx.h"
 #include "hc_input.h"
+#include "hc_invasion.h"
+#include "hc_villagers.h"
 #include "hc_world_scale.h"
 #include "m_msg.h"
 #include "m_play.h"
 #include "m_player.h"
 #include "m_player_lib.h"
+#include "m_scene_table.h"
 #include "m_view.h"
 
 extern int g_pc_paused;
@@ -31,6 +34,8 @@ extern int g_pc_paused;
 #define HC_SPAWN_AHEAD 6.0f
 #define HC_LOG_LINES 3
 #define HC_LOG_LIFE 6.0f
+#define HC_AI_WAKE_RANGE 20.0f   /* wu: idle squads farther than this sleep */
+#define HC_INVASION_CLEARANCE 10.0f /* wu kept free of Covenant around the player */
 
 typedef struct HcState {
     int inited;
@@ -54,6 +59,12 @@ typedef struct HcState {
     char log[HC_LOG_LINES][80]; /* newest first */
     float log_age[HC_LOG_LINES];
     int kills;
+    int zoom_level;        /* 0 = unscoped, else index into the weapon's magnifications + 1 */
+    int invasion_enabled;  /* HC_INVASION=0 turns the town invasion off */
+    int invasion_pending;  /* populate once the Halo camera goes live in town */
+    int attract;           /* HC_ATTRACT=1: plays itself (weapon tour) when the mouse isn't captured */
+    int attract_weapon;
+    int attract_frame;
 } HcState;
 
 static HcState g;
@@ -80,9 +91,33 @@ static void hc_log(const char* fmt, ...) {
 }
 
 static const char* unit_name(int ui) {
-    static const char* names[HALO_BIPED_COUNT] = { "chief", "grunt", "elite" };
+    static const char* names[HALO_BIPED_COUNT] = { "chief", "grunt", "elite", "villager" };
     if (ui < 0 || ui >= HALO_MAX_UNITS) return "world";
     return names[g.sim.units[ui].biped];
+}
+
+static float zoom_magnification(const HaloUnit* p) {
+    if (!p || p->dead || g.zoom_level <= 0 || p->weapon.id == HALO_WEAPON_NONE) return 1.0f;
+    const HaloWeaponDef* wd = &g_halo_weapons[p->weapon.id];
+    if (g.zoom_level > wd->zoom_levels) return 1.0f;
+    return wd->zoom_magnification[g.zoom_level - 1];
+}
+
+static void update_zoom(HaloUnit* p) {
+    if (hc_input_take_zoom(&g.input) && p && !p->dead && p->weapon.id != HALO_WEAPON_NONE) {
+        int levels = g_halo_weapons[p->weapon.id].zoom_levels;
+        g.zoom_level = levels > 0 ? (g.zoom_level + 1) % (levels + 1) : 0;
+    }
+    /* CE drops out of the scope to reload, on death and on a switch. */
+    if (!p || p->dead || p->weapon.reload_timer > 0.0f || p->weapon.ready_timer > 0.0f) g.zoom_level = 0;
+    float mag = zoom_magnification(p);
+    g.view.zoom = mag;
+    g.input.sens_scale = 1.0f / mag;
+}
+
+static float view_fov_y(void) {
+    if (g.view.zoom <= 1.01f) return HC_FOV_Y;
+    return HC_RAD2DEG(2.0f * atanf(tanf(HC_DEG2RAD(HC_FOV_Y) * 0.5f) / g.view.zoom));
 }
 
 static void log_event(const HaloEvent* e) {
@@ -95,14 +130,31 @@ static void log_event(const HaloEvent* e) {
                    g.sim.units[e->unit].shield, g.sim.units[e->unit].body);
             break;
         case HALO_EV_UNIT_KILLED:
+            if (e->unit >= 0 && g.sim.units[e->unit].biped == HALO_BIPED_VILLAGER) {
+                hc_log("villager knocked out by %s", unit_name(e->other));
+                break;
+            }
             if (e->unit != player) g.kills++;
             hc_log("%s killed by %s", unit_name(e->unit), unit_name(e->other));
             break;
-        case HALO_EV_AI_ALERTED:
-            hc_log("%s alerted", unit_name(e->unit));
+        case HALO_EV_AI_ALERTED: {
+            /* Squads re-alert on every shot they hear; only log the first. */
+            static float last_alert[HALO_MAX_UNITS];
+            if (e->unit >= 0 && e->unit < HALO_MAX_UNITS && g.time - last_alert[e->unit] > 8.0f) {
+                last_alert[e->unit] = g.time;
+                hc_log("%s alerted", unit_name(e->unit));
+            }
             break;
+        }
         case HALO_EV_AI_PANIC:
             hc_log("%s panics", unit_name(e->unit));
+            break;
+        case HALO_EV_WEAPON_SWITCHED:
+            if (e->unit == player) {
+                g.view.weapon_switch_age = 0.0f;
+                g.zoom_level = 0;
+                hc_log("chief draws the %s", g_halo_weapons[e->def].hud_name);
+            }
             break;
         case HALO_EV_PROJECTILE_IMPACT: {
             static float last;
@@ -131,6 +183,93 @@ static void hc_init_once(void) {
     g.no_capture = nc && nc[0] == '1';
     const char* el = getenv("HC_EVENT_LOG");
     if (el && el[0]) g.event_log = fopen(el, "a");
+    const char* inv = getenv("HC_INVASION");
+    g.invasion_enabled = !(inv && inv[0] == '0');
+    const char* at = getenv("HC_ATTRACT");
+    g.attract = at && at[0] == '1';
+    const char* va = getenv("HC_VILLAGER_ALL");
+    hc_villagers_set_treat_all(va && va[0] == '1');
+}
+
+/* Attract mode: a 3 s slot per weapon, aiming at the nearest living
+ * non-player unit and pulling the trigger, so unattended runs exercise
+ * the whole arsenal. */
+static void attract(HaloUnit* p) {
+    const float slot = 3.0f;
+    int w = (int)(g.time / slot) % HALO_WEAPON_COUNT;
+    float phase = fmodf(g.time, slot);
+    g.attract_frame++;
+    if (w != g.attract_weapon) {
+        g.attract_weapon = w;
+        p->control.weapon_select = w + 1;
+        if (w == 0) p->control.grenade_pressed = 1;
+    }
+    const HaloWorldApi* world = g.sim.world;
+    hv3 eye = halo_unit_eye(p);
+    int best = -1, covenant_seen = 0;
+    float best_d = 25.0f;
+    for (int i = 0; i < HALO_MAX_UNITS; i++) {
+        const HaloUnit* u = &g.sim.units[i];
+        if (!u->active || u->dead || u->is_player) continue;
+        float d = hv3_dist(u->pos, p->pos);
+        if (d > 25.0f) continue;
+        hv3 c = hv3_make(u->pos.x, u->pos.y, u->pos.z + halo_unit_height(u) * 0.6f);
+        HaloRayHit hit;
+        if (world && world->raycast && world->raycast(world->ctx, eye, c, &hit)) continue;
+        if (u->team == HALO_TEAM_COVENANT) {
+            covenant_seen = 1;
+            d -= 3.0f;
+        }
+        if (d < best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    /* Keep the tour supplied with something to shoot, somewhere it can be seen. */
+    if (!covenant_seen && g.attract_frame % 120 == 0) {
+        HaloActorTypeId type = (g.attract_frame / 120) % 2 ? HALO_ACTOR_ELITE : HALO_ACTOR_GRUNT;
+        for (int k = 0; k < 16; k++) {
+            float yaw = p->control.aim_yaw + (float)((k + 1) / 2) * (k % 2 ? 0.4f : -0.4f);
+            float dist = 4.0f + (float)(k % 3);
+            hv3 at = hv3_make(p->pos.x + cosf(yaw) * dist, p->pos.y + sinf(yaw) * dist, p->pos.z);
+            if (!hc_ac_world_spawn_ok(&at)) continue;
+            HaloRayHit hit;
+            hv3 c = hv3_make(at.x, at.y, at.z + 0.8f);
+            if (world && world->raycast && world->raycast(world->ctx, eye, c, &hit)) continue;
+            int i = halo_spawn_actor(&g.sim, type, at, hc_wrap_angle(yaw + HC_PI));
+            if (i >= 0) g.sim.units[i].grounded = 1;
+            break;
+        }
+    }
+    if (best < 0) p->control.aim_pitch *= 0.9f;
+    if (best >= 0) {
+        const HaloUnit* t = &g.sim.units[best];
+        hv3 c = hv3_make(t->pos.x, t->pos.y, t->pos.z + halo_unit_height(t) * 0.6f);
+        hv3 d = hv3_sub(c, halo_unit_eye(p));
+        p->control.aim_yaw = atan2f(d.y, d.x);
+        p->control.aim_pitch = atan2f(d.z, hv3_len_xy(d));
+    }
+    int automatic = g_halo_weapons[w].trigger.automatic;
+    int hold = phase > 1.0f && phase < 2.6f && best >= 0;
+    p->control.fire = hold && (automatic || (g.attract_frame / 6) % 2 == 0);
+    if (w == HALO_WEAPON_SNIPER_RIFLE && p->weapon.id == w && p->weapon.ready_timer <= 0.0f &&
+        g.zoom_level < (phase > 2.0f ? 2 : 1))
+        g.input.zoom = 1;
+}
+
+static int town_scene(GAME_PLAY* play) {
+    return play->scene_id == SCENE_FG || play->scene_id == SCENE_TITLE_DEMO;
+}
+
+static void invade(GAME_PLAY* play, int clear_first) {
+    HaloUnit* p = halo_player(&g.sim);
+    if (!p || !town_scene(play)) return;
+    int removed = clear_first ? hc_invasion_clear(&g.sim) : 0;
+    int n = hc_invasion_populate(&g.sim, p->pos, HC_INVASION_CLEARANCE, HC_INVASION_SQUADS);
+    char buf[48];
+    snprintf(buf, sizeof(buf), "COVENANT INVASION: %d", halo_count_living(&g.sim, HALO_TEAM_COVENANT));
+    hc_message(buf);
+    hc_log("invasion: %d spawned, %d cleared", n, removed);
 }
 
 static int dialogue_open(void) {
@@ -193,7 +332,7 @@ static void sync_ac_from_halo(PLAYER_ACTOR* pl, const HaloUnit* p) {
     a->world.angle.y = yaw;
 }
 
-static void handle_fkeys(void) {
+static void handle_fkeys(GAME_PLAY* play) {
     HcInput* in = &g.input;
     if (hc_input_take_fkey(in, 1)) {
         g.first_person = !g.first_person;
@@ -216,9 +355,9 @@ static void handle_fkeys(void) {
     if (hc_input_take_fkey(in, 7)) {
         HaloUnit* p = halo_player(&g.sim);
         if (p && !p->dead) {
-            halo_give_weapon(&g.sim, g.sim.player, HALO_WEAPON_ASSAULT_RIFLE);
-            p->grenades[HALO_GRENADE_PLASMA] = g_halo_grenades[HALO_GRENADE_PLASMA].maximum_count;
-            hc_message("ASSAULT RIFLE");
+            halo_give_arsenal(&g.sim);
+            g.view.weapon_switch_age = 0.0f;
+            hc_message("FULL ARSENAL");
         }
     }
     if (hc_input_take_fkey(in, 8)) {
@@ -239,6 +378,10 @@ static void handle_fkeys(void) {
         hc_message(buf);
     }
     if (hc_input_take_fkey(in, 10)) g.show_overlay = !g.show_overlay;
+    if (hc_input_take_fkey(in, 11)) {
+        if (town_scene(play)) invade(play, 1);
+        else hc_message("NO INVASIONS INDOORS");
+    }
 }
 
 static void build_overlay(GAME_PLAY* play, PLAYER_ACTOR* pl) {
@@ -257,20 +400,22 @@ static void build_overlay(GAME_PLAY* play, PLAYER_ACTOR* pl) {
         snprintf(t->lines[t->count++], sizeof(t->lines[0]), "chief (%.2f %.2f %.2f)wu  ac (%.0f %.0f %.0f)", p->pos.x,
                  p->pos.y, p->pos.z, ap.x, ap.y, ap.z);
         const char* wn = p->weapon.id != HALO_WEAPON_NONE ? g_halo_weapons[p->weapon.id].hud_name : "NONE";
-        snprintf(t->lines[t->count++], sizeof(t->lines[0]), "%s %d/%d  sh %.0f  hp %.0f  gren %d%s", wn,
+        snprintf(t->lines[t->count++], sizeof(t->lines[0]), "%s %d/%d  sh %.0f  hp %.0f  frag %d plasma %d%s", wn,
                  p->weapon.rounds_loaded, p->weapon.rounds_reserve, p->shield, p->body,
-                 p->grenades[HALO_GRENADE_PLASMA], g.sim.infinite_shields ? "  [INF SH]" : "");
+                 p->grenades[HALO_GRENADE_FRAG], p->grenades[HALO_GRENADE_PLASMA],
+                 g.sim.infinite_shields ? "  [INF SH]" : "");
     }
-    char ai[96];
-    int n = 0, len = 0;
-    ai[0] = 0;
-    for (int i = 0; i < HALO_MAX_UNITS && len < 80; i++) {
-        if (!g.sim.ai[i].active || !g.sim.units[i].active) continue;
-        if (!g.sim.units[i].dead) n++;
-        len += snprintf(ai + len, sizeof(ai) - len, " %c:%s", g_halo_actors[g.sim.ai[i].type].name[0],
-                        halo_ai_state_name(g.sim.ai[i].state));
+    int by_state[HALO_AI_STATE_COUNT] = { 0 };
+    int n = 0;
+    for (int i = 0; i < HALO_MAX_UNITS; i++) {
+        if (!g.sim.ai[i].active || !g.sim.units[i].active || g.sim.units[i].dead) continue;
+        n++;
+        by_state[g.sim.ai[i].state]++;
     }
-    snprintf(t->lines[t->count++], sizeof(t->lines[0]), "covenant %d  kills %d%s", n, g.kills, ai);
+    snprintf(t->lines[t->count++], sizeof(t->lines[0]),
+             "covenant %d (idle %d asleep %d alert %d combat %d search %d flee %d)  kills %d%s", n,
+             by_state[HALO_AI_IDLE], g.sim.dormant_count, by_state[HALO_AI_ALERT], by_state[HALO_AI_COMBAT],
+             by_state[HALO_AI_SEARCH], by_state[HALO_AI_FLEE], g.kills, hc_villagers_summary());
     snprintf(t->lines[t->count++], sizeof(t->lines[0]), "gfx %d/%d/%d ovf %d  rays %d lc %d path %d", gs->opa_used,
              gs->xlu_used, gs->font_used, gs->overflows, ws->rays, ws->line_checks, ws->paths);
     for (int i = 0; i < HC_LOG_LINES && t->count < HC_DEBUG_LINES; i++) {
@@ -282,8 +427,13 @@ void hc_hook_play_init(GAME_PLAY* play) {
     (void)play;
     hc_init_once();
     halo_sim_init(&g.sim, hc_ac_world_api(), (unsigned int)SDL_GetTicks() | 1u);
+    g.sim.arsenal_enabled = 1;
+    g.sim.ai_activation_range = HC_AI_WAKE_RANGE;
     hc_ac_world_invalidate();
     hc_fx_clear();
+    hc_villagers_reset();
+    g.invasion_pending = g.invasion_enabled;
+    g.zoom_level = 0;
     g.active = 0;
 }
 
@@ -311,7 +461,7 @@ void hc_hook_play_update(GAME_PLAY* play) {
         return;
     }
 
-    handle_fkeys();
+    handle_fkeys(play);
     g.fps_live = g.first_person && !dialogue_open() && !g_pc_paused;
     hc_input_set_capture(&g.input, g.fps_live && !g.no_capture && SDL_GetKeyboardFocus() != NULL);
 
@@ -319,6 +469,10 @@ void hc_hook_play_update(GAME_PLAY* play) {
     if (p == NULL) return;
     if (g.fps_live && !p->dead) {
         hc_input_apply(&g.input, &p->control);
+        if (g.attract && !g.input.capture) {
+            g.sim.infinite_shields = 1;
+            attract(p);
+        }
     } else if (!g.fps_live) {
         sync_halo_from_ac(pl, p);
     }
@@ -327,9 +481,14 @@ void hc_hook_play_update(GAME_PLAY* play) {
         g.autospawn_pending = 0;
         spawn_ahead(HALO_ACTOR_GRUNT, HC_SPAWN_AHEAD, 0.0f);
     }
+    if (g.invasion_pending && g.fps_live && town_scene(play)) {
+        g.invasion_pending = 0;
+        invade(play, 0);
+    }
 
     HcAcWorldStats* ws = hc_ac_world_stats();
     memset(ws, 0, sizeof(*ws));
+    hc_villagers_sync(play, &g.sim, dt);
     halo_sim_advance(&g.sim, dt);
 
     p = halo_player(&g.sim);
@@ -338,11 +497,17 @@ void hc_hook_play_update(GAME_PLAY* play) {
 
     for (int i = 0; i < g.sim.event_count; i++) {
         hc_fx_from_event(&g.sim, &g.sim.events[i]);
+        hc_villagers_event(&g.sim, &g.sim.events[i]);
         log_event(&g.sim.events[i]);
     }
     halo_sim_clear_events(&g.sim);
+    hc_villagers_post(play, &g.sim, dt);
     for (int i = 0; i < HC_LOG_LINES; i++) g.log_age[i] += dt;
     hc_fx_update(dt);
+    update_zoom(p);
+    g.view.weapon_switch_age += dt;
+    g.hud.label_count = 0;
+    hc_villagers_labels(&g.hud);
 
     if (p) {
         float speed = hv3_len_xy(p->vel);
@@ -374,14 +539,15 @@ void hc_hook_camera(GAME_PLAY* play) {
     xyz_t f = hc_h2a_dir(hv3_from_angles(yaw, pitch));
     xyz_t c = { e.x + f.x * 100.0f, e.y + f.y * 100.0f, e.z + f.z * 100.0f };
     xyz_t up = { 0.0f, 1.0f, 0.0f };
-    setPerspectiveView(&play->view, HC_FOV_Y, HC_NEAR, HC_FAR);
+    float fov = view_fov_y();
+    setPerspectiveView(&play->view, fov, HC_NEAR, HC_FAR);
     setLookAtView(&play->view, &e, &c, &up);
 
     g.view.first_person = 1;
     g.view.eye = e;
     g.view.yaw = yaw;
     g.view.pitch = pitch;
-    hc_draw_sky(play, &g.view, HC_FOV_Y);
+    hc_draw_sky(play, &g.view, fov);
 }
 
 void hc_hook_draw_world(GAME_PLAY* play) {
