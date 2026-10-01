@@ -34,8 +34,21 @@ build.bat test      # headless Halo sandbox tests, no game data needed
 port with `-DHC_ROOT=<repo>`, builds `build/host/bin/AnimalCrossing.exe`, and
 hard-links your disc image into `build/host/bin/rom/`.
 
-Environment switches: `HC_FIRST_PERSON=1` starts in the Halo camera;
-`HC_AUTOSPAWN=1` spawns a Grunt the first time the Halo camera goes live.
+Environment switches:
+
+| Variable | Effect |
+|---|---|
+| `HC_FIRST_PERSON=1` | Start in the Halo camera |
+| `HC_AUTOSPAWN=1` | Spawn a Grunt the first time the Halo camera goes live |
+| `HC_INVASION=0` | Don't populate the town with Covenant squads on entry |
+| `HC_NO_CAPTURE=1` | Never capture the mouse (for unattended runs) |
+| `HC_EVENT_LOG=<path>` | Append combat events to a text file |
+| `HC_ATTRACT=1` | Self-playing tour: cycles every weapon every 3 s, aims at the nearest visible target, keeps a Covenant in view, infinite shields. Only runs while the mouse isn't captured. |
+| `HC_VILLAGER_ALL=1` | Treat scripted NPCs (Rover, Porter, shopkeepers) as shootable villagers too |
+
+The title-screen demo runs in your town, so `HC_FIRST_PERSON=1 HC_NO_CAPTURE=1
+HC_ATTRACT=1 HC_VILLAGER_ALL=1` exercises the whole sandbox without touching a
+save file.
 
 ## Controls
 
@@ -52,10 +65,26 @@ muted while it is active.
 | Space | Jump |
 | Left Ctrl / C | Crouch |
 | Left mouse | Fire (Plasma Pistol: hold to charge) |
-| Right mouse / G | Throw plasma grenade |
+| Mouse wheel | Next / previous weapon |
+| 1–9, 0 | Select weapon 1–10 |
+| Q / Tab | Swap to the last weapon |
+| Right mouse / F | Throw grenade |
+| G | Switch grenade type (frag / plasma) |
+| Z / middle mouse | Zoom (Pistol 2×, Sniper 2× / 8×) |
 | R | Reload |
-| Q / Tab / wheel | Swap weapon |
 | Esc | Release the mouse and open the port's pause menu |
+
+Weapon order: Assault Rifle, Pistol, Shotgun, Sniper Rifle, Rocket Launcher,
+Flamethrower, Plasma Pistol, Plasma Rifle, Needler, Fuel Rod Gun. You spawn
+with all ten; ammo, battery and heat are kept per weapon while holstered.
+
+Entering the town populates it with Covenant squads (about 40 units). Squads
+far from you sleep until they hear gunfire or you come within 20 wu.
+
+Villagers are shootable. They shout when hit, run from gunfire, explosions
+and nearby Covenant, and get knocked down when their health runs out, then
+get back up 20 seconds later. Scripted NPCs (Rover, Porter, shop staff) flinch
+and complain but can't be knocked down unless `HC_VILLAGER_ALL=1`.
 
 When a message window opens (talking to a villager), control and the camera
 go back to Animal Crossing until it closes.
@@ -69,16 +98,17 @@ go back to Animal Crossing until it closes.
 | F3 | AI state labels over enemies |
 | F4 | AI nav paths |
 | F5 / F6 | Spawn a Grunt / an Elite ahead of you |
-| F7 | Give Assault Rifle, refill ammo and grenades |
+| F7 | Full arsenal: refill every weapon and both grenade types |
 | F8 | Infinite shields |
 | F9 | Kill all Covenant |
 | F10 | Toggle the debug overlay |
+| F11 | Clear and repopulate the town's Covenant squads |
 
 Overlay lines, top to bottom:
 1. FPS, sim tick, camera mode, scene, AC player state index, villager head height
 2. Halo and AC position
 3. Weapon, ammo, shield, health, grenades
-4. Covenant alive, kills, AI states
+4. Covenant alive by AI state (and how many are asleep), kills, villager states
 5. Display-list arena use and overflows, and collision queries this frame
 6. Latest combat events
 
