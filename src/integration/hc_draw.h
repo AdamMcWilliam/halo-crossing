@@ -1,0 +1,42 @@
+/* Draws the Halo sandbox into the Animal Crossing frame: units, first-person
+ * weapon, projectiles, effects (world pass) and the Halo HUD (overlay pass). */
+#ifndef HC_DRAW_H
+#define HC_DRAW_H
+
+#include "halo/halo_sim.h"
+#include "m_play.h"
+
+typedef struct HcView {
+    int first_person;
+    xyz_t eye;            /* AC camera eye this frame */
+    float yaw, pitch;     /* Halo aim, radians */
+    float bob_phase;
+    float bob_amount;     /* 0..1 */
+    int show_collision;
+    int show_ai;
+    int show_nav;
+    float time;
+} HcView;
+
+#define HC_DEBUG_LINES 8
+
+typedef struct HcHudText {
+    char lines[HC_DEBUG_LINES][96];
+    int count;
+    char center[64];      /* big centered message, "" = none */
+    float center_alpha;
+} HcHudText;
+
+void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* view);
+void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* view, const HcHudText* text);
+
+/* AC never shows the sky from its fixed camera; paint one behind the world.
+ * Must run before the frame's BG pass (from the camera hook). */
+void hc_draw_sky(GAME_PLAY* play, const HcView* view, float fov_y_deg);
+
+/* Visual effects driven by sandbox events. */
+void hc_fx_from_event(HaloSim* sim, const HaloEvent* e);
+void hc_fx_update(float dt);
+void hc_fx_clear(void);
+
+#endif
