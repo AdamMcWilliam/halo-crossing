@@ -1,0 +1,33 @@
+# Fresh save -> new game intro -> standing on the town's train platform.
+# Start ~12 s after launch (title menu visible). Player "chief", town "reach".
+# Surplus A presses land in the name fields as '!', so each field is cleared first.
+#   python tools/devctl.py run tools/scripts/new_game_to_station.txt --shot build/station.png
+
+enter:150 wait:2500 space:150 wait:3000 enter:150 wait:4000
+
+# K.K. on stage, then Rover on the train
+repeat 8 space:100 wait:1300
+repeat 22 space:100 wait:1000
+repeat 40 space:100 wait:600
+repeat 26 space:100 wait:700
+wait:2500
+
+# Name entry
+repeat 10 lshift:100 wait:250
+wait:600 tab:120 wait:500 c:90 h:90 i:90 e:90 f:90 wait:400 tab:120 wait:500 enter:120 wait:1500
+shot:build/intro_after_name.png
+
+# Rover chats until the destination prompt
+repeat 26 space:100 wait:800
+repeat 10 lshift:100 wait:250
+wait:600 tab:120 wait:500 r:90 e:90 a:90 c:90 h:90 wait:400 tab:120 wait:500 enter:120 wait:1500
+shot:build/intro_after_town.png
+
+# Rest of the ride, arrival, Porter
+repeat 30 space:100 wait:800
+repeat 40 space:100 wait:700
+wait:6000
+repeat 31 space:100 wait:700
+wait:8000
+repeat 20 space:100 wait:800
+wait:3000
