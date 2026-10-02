@@ -73,6 +73,7 @@ typedef struct HcState {
     int invasion_enabled;  /* HC_INVASION=0 turns the town invasion off */
     int invasion_pending;  /* populate once the Halo camera goes live in town */
     int attract;           /* HC_ATTRACT=1: plays itself (weapon tour) when the mouse isn't captured */
+    int attract_only;      /* HC_ATTRACT_WEAPON=1..10: tour just that weapon (HaloWeaponId + 1), else 0 */
     int invincible;        /* F8; on unless HC_INVINCIBLE=0. Outlives the per-scene sim reset. */
     int attract_weapon;
     int attract_threw;
@@ -209,6 +210,9 @@ static void hc_init_once(void) {
     g.invasion_enabled = !(inv && inv[0] == '0');
     const char* at = getenv("HC_ATTRACT");
     g.attract = at && at[0] == '1';
+    const char* aw = getenv("HC_ATTRACT_WEAPON");
+    g.attract_only = aw ? atoi(aw) : 0;
+    if (g.attract_only < 0 || g.attract_only > HALO_WEAPON_COUNT) g.attract_only = 0;
     const char* va = getenv("HC_VILLAGER_ALL");
     hc_villagers_set_treat_all(va && va[0] == '1');
     const char* gm = getenv("HC_INVINCIBLE");
@@ -228,7 +232,7 @@ static void hc_init_once(void) {
  * the whole arsenal. */
 static void attract(HaloUnit* p) {
     const float slot = 3.0f;
-    int w = (int)(g.time / slot) % HALO_WEAPON_COUNT;
+    int w = g.attract_only ? g.attract_only - 1 : (int)(g.time / slot) % HALO_WEAPON_COUNT;
     float phase = fmodf(g.time, slot);
     g.attract_frame++;
     if (w != g.attract_weapon) {
