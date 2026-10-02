@@ -7,6 +7,7 @@
 #include "hc_biped_view.h"
 #include "hc_fp_view.h"
 #include "hc_gfx.h"
+#include "hc_hud_view.h"
 #include "hc_models.h"
 #include "hc_world_scale.h"
 #include "m_font.h"
@@ -19,8 +20,6 @@
 #define HUD_BLUE 0x4FB4FFFF
 #define HUD_BLUE_DIM 0x123A6090
 #define HUD_RED 0xFF3A2AFF
-#define TRACKER_RANGE 8.2f    /* wu, Halo CE's 25 m motion tracker */
-
 /* ---- effects --------------------------------------------------------------- */
 
 typedef struct HcFx {
@@ -624,10 +623,14 @@ static Gfx* hud_ammo(Gfx* g, const HaloUnit* p, float t) {
             g = hc_gfx_hud_rect(g, x, y + 8.0f, 60.0f * cf, 3.0f, cf >= 1.0f ? 0xB4FF9CFF : 0x6FA860FF);
         }
     }
-    /* Grenades: frags then plasmas; the type G will throw is outlined. */
+    return g;
+}
+
+static Gfx* hud_grenades(Gfx* g, const HaloUnit* p) {
+    /* Frags then plasmas; the type G will throw is outlined. */
     static const u32 k_gren[HALO_GRENADE_COUNT] = { [HALO_GRENADE_FRAG] = 0x8AA65AFF, [HALO_GRENADE_PLASMA] = 0x6CB6FFFF };
     static const HaloGrenadeId k_order[2] = { HALO_GRENADE_FRAG, HALO_GRENADE_PLASMA };
-    float gy = y + 24.0f;
+    float x = 14.0f, gy = 38.0f;
     for (int k = 0; k < 2; k++) {
         HaloGrenadeId type = k_order[k];
         float gx = x + k * 36.0f;
@@ -649,23 +652,22 @@ static Gfx* hud_ring(Gfx* g, float cx, float cy, float r, int dots, u32 c) {
     return g;
 }
 
-/* Black outside a circle, thin crosshairs inside: the CE scope view. */
-static Gfx* hud_scope(Gfx* g, float zoom) {
+/* Black outside a circle (unless Halo's scope mask is drawn), thin crosshairs inside: the CE scope view. */
+static Gfx* hud_scope(Gfx* g, int mask) {
     float cx = 160.0f, cy = 120.0f, r = 104.0f;
-    for (float yy = 0.0f; yy < 240.0f; yy += 2.0f) {
+    for (float yy = 0.0f; mask && yy < 240.0f; yy += 2.0f) {
         float dy = yy + 1.0f - cy;
         float half = fabsf(dy) < r ? sqrtf(r * r - dy * dy) : 0.0f;
         g = hc_gfx_hud_rect(g, 0.0f, yy, cx - half, 2.0f, 0x000000FF);
         g = hc_gfx_hud_rect(g, cx + half, yy, 320.0f - (cx + half), 2.0f, 0x000000FF);
     }
-    g = hud_ring(g, cx, cy, r, 160, 0x4FB4FFA0);
+    if (mask) g = hud_ring(g, cx, cy, r, 160, 0x4FB4FFA0);
     g = hc_gfx_hud_rect(g, cx - r, cy - 0.25f, r * 2.0f, 0.5f, 0x4FB4FF90);
     g = hc_gfx_hud_rect(g, cx - 0.25f, cy - r, 0.5f, r * 2.0f, 0x4FB4FF90);
     for (int i = 1; i <= 4; i++) {
         float o = (float)i * 12.0f;
         g = hc_gfx_hud_rect(g, cx - 3.0f, cy + o, 6.0f, 0.5f, 0x4FB4FFB0);
     }
-    (void)zoom;
     return g;
 }
 
@@ -689,9 +691,9 @@ static int aiming_at_enemy(HaloSim* sim, const HaloUnit* p, const HcView* v) {
     return 0;
 }
 
-static Gfx* hud_reticle(Gfx* g, HaloSim* sim, const HaloUnit* p, const HcView* v) {
+static Gfx* hud_reticle(Gfx* g, const HaloUnit* p, const HcView* v, int on_enemy) {
     float cx = 160.0f, cy = 120.0f;
-    u32 c = aiming_at_enemy(sim, p, v) ? HUD_RED : HUD_BLUE;
+    u32 c = on_enemy ? HUD_RED : HUD_BLUE;
     if (v->zoom > 1.01f) return hc_gfx_hud_rect(g, cx - 0.5f, cy - 0.5f, 1.0f, 1.0f, c);
     float err = p->weapon.error;
     switch (p->weapon.id) {
@@ -784,9 +786,9 @@ static Gfx* hud_tracker(Gfx* g, HaloSim* sim, const HaloUnit* p, const HcView* v
         if (hv3_len_xy(u->vel) < 0.15f && u->weapon.fire_flash <= 0.0f) continue;
         hv3 d = hv3_sub(u->pos, p->pos);
         float dist = hv3_len_xy(d);
-        if (dist > TRACKER_RANGE) continue;
+        if (dist > HC_TRACKER_RANGE) continue;
         float rel = hc_wrap_angle(atan2f(d.y, d.x) - v->yaw);
-        float k = dist / TRACKER_RANGE * r;
+        float k = dist / HC_TRACKER_RANGE * r;
         float px = cx - sinf(rel) * k, py = cy - cosf(rel) * k;
         float pulse = 0.6f + 0.4f * sinf(t * 8.0f);
         u32 c = u->team == p->team ? 0xFFE65AFF : (0xFF3A2A00 | (u32)(pulse * 255.0f));
@@ -806,14 +808,18 @@ void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* v, const HcHudText
     HaloUnit* p = halo_player(sim);
     Gfx* g = NOW_FONT_DISP;
     g = hc_gfx_hud_mode(g);
+    unsigned drawn = 0;
     if (p && v->first_person) {
         if (!p->dead) {
-            if (v->zoom > 1.01f) g = hud_scope(g, v->zoom);
-            g = hud_shield(g, p, v->time);
-            g = hud_ammo(g, p, v->time);
-            g = hud_reticle(g, sim, p, v);
-            g = hud_damage_dir(g, p, v);
-            g = hud_tracker(g, sim, p, v, v->time);
+            int on_enemy = aiming_at_enemy(sim, p, v);
+            g = hc_hud_view_draw(g, sim, p, v, on_enemy, &drawn);
+            if (v->zoom > 1.01f) g = hud_scope(g, !(drawn & HC_HUD_DREW_SCOPE));
+            if (!(drawn & HC_HUD_DREW_UNIT)) g = hud_shield(g, p, v->time);
+            if (!(drawn & HC_HUD_DREW_WEAPON)) g = hud_ammo(g, p, v->time);
+            if (!(drawn & HC_HUD_DREW_GRENADES)) g = hud_grenades(g, p);
+            if (!(drawn & HC_HUD_DREW_RETICLE)) g = hud_reticle(g, p, v, on_enemy);
+            if (!(drawn & HC_HUD_DREW_DAMAGE)) g = hud_damage_dir(g, p, v);
+            if (!(drawn & HC_HUD_DREW_SENSOR)) g = hud_tracker(g, sim, p, v, v->time);
             if (p->hurt_flash > 0.0f) {
                 g = hc_gfx_hud_rect(g, 0.0f, 0.0f, 320.0f, 240.0f, 0xC0100000 | (u32)(p->hurt_flash * 70.0f));
             }
@@ -832,18 +838,20 @@ void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* v, const HcHudText
         const HaloWeaponState* w = &p->weapon;
         if (w->id != HALO_WEAPON_NONE) {
             const HaloWeaponDef* wd = &g_halo_weapons[w->id];
+            int halo_panel = drawn & HC_HUD_DREW_WEAPON, halo_warnings = drawn & HC_HUD_DREW_WARNINGS;
             if (wd->rounds_loaded_maximum > 0) {
                 snprintf(buf, sizeof(buf), "%d", w->rounds_reserve);
-                pc_text_draw(game, buf, 76.0f, 12.0f, 0x4F, 0xB4, 0xFF, 255, 0.55f);
-                if (w->reload_timer > 0.0f) pc_text_draw(game, "RELOADING", 136.0f, 150.0f, 0x4F, 0xB4, 0xFF, 220, 0.45f);
-                else if (w->rounds_loaded == 0 && w->rounds_reserve == 0)
+                if (!halo_panel) pc_text_draw(game, buf, 76.0f, 12.0f, 0x4F, 0xB4, 0xFF, 255, 0.55f);
+                if (!halo_warnings && w->reload_timer > 0.0f)
+                    pc_text_draw(game, "RELOADING", 136.0f, 150.0f, 0x4F, 0xB4, 0xFF, 220, 0.45f);
+                else if (!halo_warnings && w->rounds_loaded == 0 && w->rounds_reserve == 0)
                     pc_text_draw(game, "NO AMMO", 140.0f, 150.0f, 0xFF, 0x3A, 0x2A, 230, 0.45f);
-            } else {
+            } else if (!halo_panel) {
                 snprintf(buf, sizeof(buf), "%d%%", (int)(w->battery * 100.0f + 0.5f));
                 pc_text_draw(game, buf, 80.0f, 10.0f, 0x4F, 0xB4, 0xFF, 255, 0.5f);
                 if (w->overheated) pc_text_draw(game, "OVERHEATED", 132.0f, 150.0f, 0xFF, 0x3A, 0x2A, 230, 0.45f);
             }
-            pc_text_draw(game, wd->hud_name, 14.0f, 48.0f, 0x4F, 0xB4, 0xFF, 200, 0.38f);
+            if (!halo_panel) pc_text_draw(game, wd->hud_name, 14.0f, 48.0f, 0x4F, 0xB4, 0xFF, 200, 0.38f);
             if (v->zoom > 1.01f) {
                 snprintf(buf, sizeof(buf), "%.0fx", v->zoom);
                 pc_text_draw(game, buf, 152.0f, 196.0f, 0x4F, 0xB4, 0xFF, 230, 0.5f);

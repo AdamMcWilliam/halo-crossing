@@ -18,6 +18,7 @@
 #include "hc_biped_view.h"
 #include "hc_fp_view.h"
 #include "hc_gfx.h"
+#include "hc_hud_view.h"
 #include "hc_input.h"
 #include "hc_invasion.h"
 #include "hc_villagers.h"
@@ -218,6 +219,7 @@ static void hc_init_once(void) {
     g.warp_shop = wp && strcmp(wp, "shop") == 0;
     hc_fp_view_init();
     hc_biped_view_init();
+    hc_hud_view_init();
     hc_audio_init();
 }
 

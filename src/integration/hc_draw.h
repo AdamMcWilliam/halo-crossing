@@ -6,6 +6,8 @@
 #include "halo/halo_sim.h"
 #include "m_play.h"
 
+#define HC_TRACKER_RANGE 8.2f /* wu, Halo CE's 25 m motion tracker */
+
 typedef struct HcView {
     int first_person;
     xyz_t eye;            /* AC camera eye this frame */
