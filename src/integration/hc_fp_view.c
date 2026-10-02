@@ -244,6 +244,11 @@ void hc_fp_view_update(const HaloUnit* p, float dt) {
         hc_fp_blend(from, s.local, s.fade, w->node_count);
         memcpy(s.local, from, sizeof(HcFpXf) * (size_t)w->node_count);
     }
+    int mag = g_halo_weapons[p->weapon.id].rounds_loaded_maximum;
+    if (mag > 0 && hc_fp_has_anim(w, HC_FP_AMMUNITION)) {
+        float spent = 1.0f - (float)p->weapon.rounds_loaded / (float)mag;
+        hc_fp_overlay(w, HC_FP_AMMUNITION, spent * (float)(w->anim_frames[HC_FP_AMMUNITION] - 1), 1.0f, s.local);
+    }
     hc_fp_pose(w, s.local, s.world, s.skin);
     s.posed = 1;
 }

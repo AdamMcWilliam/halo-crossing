@@ -40,6 +40,7 @@ typedef enum HcFpAnim {
     HC_FP_RELOAD_EXIT,      /* shotgun */
     HC_FP_FIRE_CHARGED,
     HC_FP_OVERHEATING,
+    HC_FP_AMMUNITION,       /* overlay; frame = rounds spent from the magazine */
     HC_FP_ANIM_COUNT
 } HcFpAnim;
 

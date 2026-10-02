@@ -27,6 +27,7 @@ ANIM_SLOTS = [
     ("exit-full",),    # shotgun: back to idle
     ("fire-2",),       # plasma pistol charged shot
     ("overheating",),
+    ("ammunition",),   # overlay posed by rounds spent: the needler's needles sink as it empties
 ]
 
 ARMS = r"characters\cyborg\fp\fp"
