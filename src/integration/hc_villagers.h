@@ -50,5 +50,16 @@ int hc_villagers_is_nook(int unit);
 int hc_villagers_nook_kills(void);
 /* Once per kill: nonzero and where he fell. */
 int hc_villagers_take_nook_kill(xyz_t* pos);
+/* Any of Nook's storefront actors. */
+int hc_villagers_is_nook_actor(const ACTOR* a);
+
+/* HC_SCENARIO=debt: what the Chief owes Nook, in Bells (0 = nothing). While
+ * it's unpaid Nook follows him around the shop, steaming, and yells about
+ * it, adding interest with every outburst. */
+void hc_villagers_set_debt(u32 bells);
+u32 hc_villagers_debt(void);
+/* Nook's greeting for a customer that owes him, as message-window text.
+ * Returns its length, or 0 if it didn't fit. */
+int hc_villagers_debt_greeting(unsigned char* text, int cap);
 
 #endif

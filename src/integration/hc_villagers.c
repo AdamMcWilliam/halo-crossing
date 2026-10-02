@@ -3,8 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ef_effect_control.h"
+#include "hc_ac_text.h"
 #include "hc_world_scale.h"
 #include "m_actor.h"
+#include "m_common_data.h"
+#include "m_msg.h"
 
 #define HV_MAX 24
 #define HV_HEAR_GUNFIRE 7.0f      /* wu */
@@ -21,6 +25,17 @@
 #define HV_NOOK_DOWN_TIME 1.0e9f  /* stays down until the scene reloads */
 #define HV_HEAD_AC 52.0f          /* speech bubble height above the feet */
 #define HV_NOOK_RGB 0xFFD08000
+#define HV_DEBT_RGB 0xFF382800
+#define HV_SHOUT_RGB 0xE6141400   /* message-window shouting */
+#define HV_SHOUT_SCALE 56         /* 1.75x letters (32nds) */
+#define HV_STALK_SPEED 1.7f       /* wu/s */
+#define HV_STALK_NEAR 2.0f        /* wu: in your face, but all of him in view */
+#define HV_RANT_MIN 2.0f
+#define HV_RANT_MAX 3.2f
+#define HV_STEAM_EVERY 0.22f      /* the red face lasts about this long */
+#define HV_INTEREST 0.003f        /* per outburst */
+#define HV_DEBT_MAX 9999999u      /* the post office shows seven digits */
+#define HV_FUNERAL_COSTS 50000u
 
 typedef struct HcVillager {
     int used;
@@ -41,6 +56,11 @@ typedef struct HcVillager {
     float line_age;
     u32 line_rgb;
     float line_cooldown;
+    int line_shout;
+    int stalking;          /* Nook, owed money: following the Chief */
+    float rant_timer;
+    float steam_timer;
+    int steam_count;
 } HcVillager;
 
 static HcVillager s_v[HV_MAX];
@@ -50,6 +70,8 @@ static char s_summary[64];
 static int s_nook_kills;       /* survives scene changes, unlike everything above */
 static int s_nook_kill_pending;
 static xyz_t s_nook_kill_pos;
+static u32 s_debt;             /* also survives scene changes */
+static int s_debt_paid_line;
 
 /* ---- lines ----------------------------------------------------------------- */
 
@@ -96,6 +118,17 @@ static const char* k_nook_back[] = {
     "Welcome back! I have excellent insurance, yes yes!", "Ah, you again. Prices just went up, hm?",
     "Hm? Oh, a customer! Totally unrelated to last time!",
 };
+/* %s is the debt. */
+static const char* k_nook_rant[] = {
+    "WHERE ARE MY BELLS?!",          "YOU OWE ME %s BELLS!",            "PAY UP, YES, YES!",
+    "INTEREST! IT'S %s NOW!",        "I KNOW WHERE YOU LIVE. I BUILT IT!", "NO MORE PAYMENT PLANS!",
+    "THE MORTGAGE, HM?! THE MORTGAGE!", "DON'T YOU WALK AWAY FROM ME!",  "EVERY BELL! EVERY LAST BELL!",
+    "%s BELLS! I'M COUNTING!",
+};
+static const char* k_nook_down_debt[] = {
+    "My... bells... my beautiful... bells...", "The debt... passes... to my heirs...",
+    "You'll... still... owe... me...",
+};
 
 #define PICK(arr) pick_line(arr, (int)(sizeof(arr) / sizeof(arr[0])))
 
@@ -115,6 +148,26 @@ static void say(HcVillager* v, const char* text, u32 rgb, int force) {
     v->line_age = 0.0f;
     v->line_rgb = rgb;
     v->line_cooldown = 1.2f;
+    v->line_shout = 0;
+}
+
+/* "4,980,000" */
+static void fmt_bells(u32 bells, char out[16]) {
+    char digits[12];
+    int n = snprintf(digits, sizeof(digits), "%u", (unsigned)bells), k = 0;
+    for (int i = 0; i < n; i++) {
+        if (i > 0 && (n - i) % 3 == 0) out[k++] = ',';
+        out[k++] = digits[i];
+    }
+    out[k] = '\0';
+}
+
+static void shout_debt(HcVillager* v, const char* fmt) {
+    char bells[16], text[48];
+    fmt_bells(s_debt, bells);
+    snprintf(text, sizeof(text), fmt, bells);
+    say(v, text, HV_DEBT_RGB, 1);
+    v->line_shout = 1;
 }
 
 /* ---- adoption ----------------------------------------------------------- */
@@ -178,7 +231,12 @@ static HcVillager* adopt(HaloSim* sim, ACTOR* a) {
         if (v->special) sim->units[u].body = HV_SPECIAL_BODY;
         if (v->nook) {
             sim->units[u].body = HV_NOOK_BODY;
-            if (s_nook_kills > 0) say(v, PICK(k_nook_back), HV_NOOK_RGB, 1);
+            if (s_nook_kills > 0 && s_debt > 0) {
+                s_debt = s_debt + HV_FUNERAL_COSTS < HV_DEBT_MAX ? s_debt + HV_FUNERAL_COSTS : HV_DEBT_MAX;
+                shout_debt(v, "I'M BACK! PLUS FUNERAL COSTS: %s!");
+            } else if (s_nook_kills > 0) {
+                say(v, PICK(k_nook_back), HV_NOOK_RGB, 1);
+            }
         }
         return v;
     }
@@ -228,7 +286,7 @@ void hc_villagers_sync(GAME_PLAY* play, HaloSim* sim, float dt) {
             continue;
         }
         HaloUnit* u = &sim->units[v->unit];
-        int puppeted = v->state == HC_VILLAGER_PANICKING || v->state == HC_VILLAGER_DOWN;
+        int puppeted = v->state == HC_VILLAGER_PANICKING || v->state == HC_VILLAGER_DOWN || v->stalking;
         hv3 p = hc_a2h_pos(puppeted ? v->puppet : v->actor->world.position);
         /* Velocity only feeds the motion tracker. */
         u->vel = dt > 0.0f ? hv3_scale(hv3_sub(p, v->last_pos), 1.0f / dt) : hv3_make(0, 0, 0);
@@ -284,7 +342,7 @@ void hc_villagers_event(HaloSim* sim, const HaloEvent* e) {
             if (!v) break;
             if (v->nook) {
                 set_state(v, HC_VILLAGER_DOWN, HV_NOOK_DOWN_TIME);
-                say(v, PICK(k_nook_down), HV_NOOK_RGB, 1);
+                say(v, s_debt > 0 ? PICK(k_nook_down_debt) : PICK(k_nook_down), HV_NOOK_RGB, 1);
                 s_nook_kills++;
                 s_nook_kill_pending = 1;
                 s_nook_kill_pos = v->puppet;
@@ -361,14 +419,99 @@ static void drive_panic(HaloSim* sim, HcVillager* v, float dt) {
     a->shape_info.rotation.x = (s16)(0x0600);
 }
 
+static int talking(void) {
+    mMsg_Window_c* w = mMsg_Get_base_window_p();
+    return w != NULL && !mMsg_Check_MainHide(w);
+}
+
+/* AC's own temper: steam puffs (with their huff) and a red face. */
+static void steam(GAME_PLAY* play, HcVillager* v, float dt) {
+    if ((v->steam_timer -= dt) > 0.0f) return;
+    v->steam_timer = HV_STEAM_EVERY;
+    if (eEC_CLIP == NULL) return;
+    ACTOR* a = v->actor;
+    xyz_t head = a->eye.position;
+    if (!(head.y > a->world.position.y + 10.0f) || fabsf(head.x - a->world.position.x) > 40.0f ||
+        fabsf(head.z - a->world.position.z) > 40.0f) {
+        head = a->world.position;
+        head.y += 40.0f;
+    }
+    s16 facing = a->shape_info.rotation.y;
+    eEC_CLIP->effect_make_proc(eEC_EFFECT_PUN_SEKIMEN, head, 1, facing, &play->game, a->npc_id, 0, 0);
+    if (v->steam_count++ % 3 == 0)
+        eEC_CLIP->effect_make_proc(eEC_EFFECT_PUN_YUGE, head, 1, facing, &play->game, a->npc_id,
+                                   (s16)((v->steam_count / 3) & 1), 0);
+}
+
+static void stop_stalking(HcVillager* v) {
+    if (!v->stalking) return;
+    v->stalking = 0;
+    if (v->state == HC_VILLAGER_NORMAL || v->state == HC_VILLAGER_ALERTED) release(v);
+}
+
+/* Owed money, Nook comes out from behind the counter and follows the Chief
+ * around, steaming, yelling, and charging interest for it. */
+static void nook_debt(GAME_PLAY* play, HaloSim* sim, HcVillager* v, float dt) {
+    if (s_debt_paid_line && s_debt == 0) {
+        s_debt_paid_line = 0;
+        say(v, "Paid in full?! ...Yes, yes! Welcome!", HV_NOOK_RGB, 1);
+    }
+    const HaloUnit* p = halo_player(sim);
+    if (s_debt == 0 || p == NULL || p->dead || talking() ||
+        (v->state != HC_VILLAGER_NORMAL && v->state != HC_VILLAGER_ALERTED)) {
+        stop_stalking(v);
+        return;
+    }
+    ACTOR* a = v->actor;
+    if (!v->stalking) {
+        v->stalking = 1;
+        v->puppet = a->world.position;
+        v->rant_timer = 0.5f;
+    }
+    steam(play, v, dt);
+
+    hv3 at = hc_a2h_pos(v->puppet);
+    hv3 d = hv3_sub(p->pos, at);
+    float dist = hv3_len_xy(d);
+    float yaw = atan2f(d.y, d.x);
+    if (dist > HV_STALK_NEAR) {
+        float step = hc_minf(HV_STALK_SPEED * dt, dist - HV_STALK_NEAR);
+        hv3 to = hv3_make(at.x + cosf(yaw) * step, at.y + sinf(yaw) * step, at.z);
+        const HaloWorldApi* w = sim->world;
+        if (w && w->move_biped) {
+            HaloMoveResult r;
+            w->move_biped(w->ctx, at, to, 0.2f, 0.7f, &r);
+            if (r.in_water || (r.has_ground && fabsf(r.ground_z - at.z) > 0.3f)) {
+                to = at;
+            } else {
+                to = r.position;
+                if (r.has_ground) to.z = r.ground_z;
+            }
+        }
+        v->puppet = hc_h2a_pos(to);
+    }
+    s16 ay = hc_h2a_yaw(yaw);
+    a->shape_info.rotation.y = ay;
+    a->world.angle.y = ay;
+    a->shape_info.rotation.z = (s16)(sinf(v->state_time * 34.0f) * 0x0380); /* shaking with rage */
+    a->shape_info.rotation.x = (s16)0x0400;                                  /* leaning in */
+
+    if ((v->rant_timer -= dt) <= 0.0f) {
+        v->rant_timer = HV_RANT_MIN + hv_rand() * (HV_RANT_MAX - HV_RANT_MIN);
+        u32 interest = (u32)((float)s_debt * HV_INTEREST) / 10u * 10u;
+        s_debt = s_debt + interest < HV_DEBT_MAX ? s_debt + interest : HV_DEBT_MAX;
+        shout_debt(v, PICK(k_nook_rant));
+    }
+}
+
 void hc_villagers_post(GAME_PLAY* play, HaloSim* sim, float dt) {
-    (void)play;
     for (int i = 0; i < HV_MAX; i++) {
         HcVillager* v = &s_v[i];
         if (!v->used || !v->actor) continue;
         v->state_time += dt;
         v->line_age += dt;
         if (v->line_cooldown > 0.0f) v->line_cooldown -= dt;
+        if (v->nook) nook_debt(play, sim, v, dt);
         ACTOR* a = v->actor;
         switch (v->state) {
             case HC_VILLAGER_ALERTED:
@@ -403,7 +546,7 @@ void hc_villagers_post(GAME_PLAY* play, HaloSim* sim, float dt) {
             default:
                 break;
         }
-        if (v->state == HC_VILLAGER_PANICKING || v->state == HC_VILLAGER_DOWN) {
+        if (v->state == HC_VILLAGER_PANICKING || v->state == HC_VILLAGER_DOWN || v->stalking) {
             a->world.position = v->puppet;
             a->position_speed.x = a->position_speed.z = 0.0f;
             a->speed = 0.0f;
@@ -421,6 +564,7 @@ void hc_villagers_labels(HcHudText* hud) {
         snprintf(l->text, sizeof(l->text), "%s", v->line);
         l->alpha = hc_clampf((HV_LINE_TIME - v->line_age) / 0.4f, 0.0f, 1.0f);
         l->rgb = v->line_rgb;
+        l->shout = v->line_shout;
     }
 }
 
@@ -449,6 +593,41 @@ int hc_villagers_take_nook_kill(xyz_t* pos) {
     s_nook_kill_pending = 0;
     if (pos) *pos = s_nook_kill_pos;
     return 1;
+}
+
+int hc_villagers_is_nook_actor(const ACTOR* a) {
+    return a != NULL && is_nook_profile(a->id);
+}
+
+void hc_villagers_set_debt(u32 bells) {
+    if (bells > HV_DEBT_MAX) bells = HV_DEBT_MAX;
+    if (s_debt > 0 && bells == 0) s_debt_paid_line = 1;
+    s_debt = bells;
+}
+
+u32 hc_villagers_debt(void) {
+    return s_debt;
+}
+
+int hc_villagers_debt_greeting(unsigned char* text, int cap) {
+    char bells[16];
+    fmt_bells(s_debt, bells);
+    HcAcText t;
+    hc_ac_text_begin(&t, text, cap);
+    hc_ac_text_shout(&t, "HEY! YOU!", HV_SHOUT_SCALE, HV_SHOUT_RGB);
+    hc_ac_text_put(&t, "\n\nYes, you, ");
+    hc_ac_text_player_name(&t);
+    hc_ac_text_put(&t, "!\nWhere is my money, hm?!");
+    hc_ac_text_page(&t);
+    hc_ac_text_put(&t, "You owe me\n");
+    hc_ac_text_shout(&t, bells, HV_SHOUT_SCALE, HV_SHOUT_RGB);
+    hc_ac_text_put(&t, "\n\nBells! BELLS!");
+    hc_ac_text_page(&t);
+    hc_ac_text_put(&t, "Interest is due daily,\nhourly, by the SECOND!\n");
+    hc_ac_text_shout(&t, "PAY UP!", HV_SHOUT_SCALE, HV_SHOUT_RGB);
+    hc_ac_text_page(&t);
+    hc_ac_text_put(&t, "...Ahem.\nWelcome! Do browse,\nyes, yes. Prices are up\n300%, naturally.");
+    return hc_ac_text_end(&t);
 }
 
 const char* hc_villagers_summary(void) {
