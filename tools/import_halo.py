@@ -5,6 +5,7 @@
 Writes into assets_local/halo/generated/ (gitignored):
   fp_weapons.hcpk   first-person arms and weapons (from bloodgulch)
   bipeds.hcpk       Grunts, Elites and the Covenant weapons they hold (from b30, c40)
+  sounds.hcpk       weapon, impact and shield sounds and Covenant dialogue
 The game loads them at startup and falls back to placeholder models without them.
 """
 import argparse
@@ -14,12 +15,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from halo_import import biped_pack, fp_pack  # noqa: E402
+from halo_import import biped_pack, fp_pack, sound_pack  # noqa: E402
 from halo_import.cache_map import load_from_disc  # noqa: E402
 from halo_import.xdvdfs import XboxDisc  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKS = ("fp", "bipeds")
+PACKS = ("fp", "bipeds", "sounds")
 
 
 def write(out_dir, name, data):
@@ -59,6 +60,9 @@ def main():
             print("third-person Covenant:")
             data, _ = biped_pack.build_pack(load_map)
             write(args.out, "bipeds.hcpk", data)
+        if "sounds" in only:
+            print("sounds:")
+            write(args.out, "sounds.hcpk", sound_pack.build_pack(load_map))
     print("done in %.1f s" % (time.time() - t0))
 
 
