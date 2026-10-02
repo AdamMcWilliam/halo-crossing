@@ -55,7 +55,7 @@ def main():
 
         if "fp" in only:
             print("first-person weapons:")
-            data, _ = fp_pack.build_pack(load_map(args.map))
+            data, _ = fp_pack.build_pack(load_map(args.map), load_map)
             write(args.out, "fp_weapons.hcpk", data)
         if "bipeds" in only:
             print("third-person Covenant:")

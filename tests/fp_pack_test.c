@@ -123,8 +123,7 @@ static void test_fp_pack(const char* path) {
         hc_fp_sample(w, HC_FP_READY, (float)(w->anim_frames[HC_FP_READY] - 1), 0, b);
         CHECK(memcmp(a, b, sizeof(HcFpXf) * (size_t)w->node_count) == 0);
     }
-    CHECK(weapons >= 9);
-    CHECK(hc_fp_pack_model(&p, 9) == NULL); /* Xbox CE has no first-person fuel rod */
+    CHECK(weapons == 10);
     for (int t = 0; t < p.texture_count; t++) CHECK(((uintptr_t)hc_fp_texture_pixels(&p, t) & 31) == 0);
     printf("fp pack: %d weapons, %d textures checked\n", weapons, p.texture_count);
     hc_fp_pack_free(&p);
