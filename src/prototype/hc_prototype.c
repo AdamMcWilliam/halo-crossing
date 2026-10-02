@@ -58,7 +58,8 @@ typedef struct HcState {
     float fps;
     float msg_timer;
     float bob_phase;
-    int autospawn_pending;
+    int autospawn_pending; /* HC_AUTOSPAWN=1 a Grunt ahead; 2 a Grunt and an Elite close by, held still a while */
+    float hold_ai;
     int no_capture;        /* HC_NO_CAPTURE: unattended runs never grab the mouse */
     FILE* event_log;       /* HC_EVENT_LOG: every log line, for scripted checks */
     unsigned updates;      /* play updates since the last HUD draw */
@@ -197,7 +198,7 @@ static void hc_init_once(void) {
     const char* fp = getenv("HC_FIRST_PERSON");
     g.first_person = fp && fp[0] == '1';
     const char* sp = getenv("HC_AUTOSPAWN");
-    g.autospawn_pending = sp && sp[0] == '1';
+    g.autospawn_pending = sp && (sp[0] == '1' || sp[0] == '2') ? sp[0] - '0' : 0;
     const char* nc = getenv("HC_NO_CAPTURE");
     g.no_capture = nc && nc[0] == '1';
     const char* el = getenv("HC_EVENT_LOG");
@@ -649,7 +650,7 @@ void hc_hook_play_update(GAME_PLAY* play) {
 
     HaloUnit* p = ensure_player(pl);
     if (p == NULL) return;
-    int touring = g.attract && !g.input.capture;
+    int touring = g.attract && !g.input.capture && g.hold_ai <= 0.0f;
     g.sim.infinite_shields = g.invincible || touring;
     if (g.fps_live && !p->dead) {
         hc_input_apply(&g.input, &p->control);
@@ -660,9 +661,19 @@ void hc_hook_play_update(GAME_PLAY* play) {
     }
 
     if (g.autospawn_pending && g.fps_live) {
+        if (g.autospawn_pending == 2) {
+            /* The title demo starts facing the train; turn round to the open town. */
+            p->control.aim_yaw = p->yaw = hc_wrap_angle(p->control.aim_yaw + HC_PI);
+            spawn_ahead(HALO_ACTOR_GRUNT, 2.0f, -0.2f);
+            spawn_ahead(HALO_ACTOR_ELITE, 3.0f, 0.25f);
+            g.sim.ai_frozen = 1;
+            g.hold_ai = 20.0f;
+        } else {
+            spawn_ahead(HALO_ACTOR_GRUNT, HC_SPAWN_AHEAD, 0.0f);
+        }
         g.autospawn_pending = 0;
-        spawn_ahead(HALO_ACTOR_GRUNT, HC_SPAWN_AHEAD, 0.0f);
     }
+    if (g.hold_ai > 0.0f && (g.hold_ai -= dt) <= 0.0f) g.sim.ai_frozen = 0;
     if (g.invasion_pending && g.fps_live && town_scene(play)) {
         g.invasion_pending = 0;
         invade(play, 0);
