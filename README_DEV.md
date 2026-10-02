@@ -81,7 +81,10 @@ Environment switches:
 | `HC_AUDIO_DUMP=<path>` | Mix Halo sounds into a raw 44.1 kHz 16-bit stereo file instead of the audio device |
 | `HC_VILLAGER_ALL=1` | Treat scripted NPCs (Rover, Porter, shopkeepers) as shootable villagers too |
 | `HC_SHOP_HOURS=1` | Keep Nook's real opening hours (by default his shop never closes) |
-| `HC_WARP=shop` | Three seconds into the town, walk the Chief through Nook's shop door (unattended checks) |
+| `HC_WARP=shop` | Three seconds into the town (or the title demo), walk the Chief through Nook's shop door (unattended checks) |
+| `HC_SCENARIO=debt` | You owe Tom Nook 4,980,000 Bells. You start in first person and walk into his shop. He greets you with a yelling demand, then follows you around steaming, shouting, and adding interest. The debt is your house loan, so paying it off at the post office calms him down. Shoot him and he comes back with funeral costs. |
+| `HC_DEBT=<bells>` | Starting debt for `HC_SCENARIO=debt` (up to 9,999,999) |
+| `HC_AUTO_TALK=1` | Tap A through dialogue without the tour (unattended checks) |
 
 Saves live in `build/host/bin/save/card_a/DobutsunomoriP_MURA.gci`, the same
 format as Dolphin's Memcard Manager "Export GCI". To skip the new-game intro,
@@ -92,7 +95,9 @@ you save.
 The title-screen demo runs in your town, so `HC_FIRST_PERSON=1 HC_NO_CAPTURE=1
 HC_ATTRACT=1 HC_VILLAGER_ALL=1` exercises the whole sandbox without touching a
 save file; add `HC_WARP=shop` to take the tour into Nook's shop. The tour taps
-A through any dialogue. `SDL_AUDIODRIVER=dummy` keeps a test instance silent.
+A through any dialogue. `HC_SCENARIO=debt HC_ATTRACT=0 HC_VILLAGER_ALL=0
+HC_AUTO_TALK=1` plays the debt scenario in the demo without the tour shooting
+Nook. `SDL_AUDIODRIVER=dummy` keeps a test instance silent.
 
 ## Controls
 

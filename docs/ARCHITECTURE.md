@@ -99,7 +99,8 @@ halo-crossing/
     hc_biped_view.c        Grunts, Elites and their weapons
     hc_hud_pack.c, hc_hud_view.c  Halo's HUD
     hc_sound.c, hc_audio.c sound pack, 3D mixer, sim events to sounds
-    hc_villagers.c         villagers and Tom Nook in the firefight
+    hc_villagers.c         villagers and Tom Nook in the firefight (and chasing debts)
+    hc_ac_text.c           writes AC message text (font codes, shouts, pages)
     hc_input.c             SDL input to Halo controls
     hc_hooks.h             hook signatures called from the host
   src/prototype/           Milestone glue: hooks, camera, debug keys, overlay
