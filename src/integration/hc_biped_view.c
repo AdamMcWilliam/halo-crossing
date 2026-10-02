@@ -30,10 +30,14 @@
 #define SHIELD_RGB 0x9CD8FF00
 #define HULL_PUSH 0.012f        /* wu the shield flare floats off the skin */
 #define MAX_BLASTS 16
+/* Halo's model textures are dark and lit overbright; shade carries light / 2
+ * and the second combiner cycle doubles it (with a white environment colour). */
+#define LIGHT_GAIN 2.0f
 
 #define CC_TEX_SHADE TEXEL0, 0, SHADE, 0, 0, 0, 0, TEXEL0
 #define CC_SHADE_PRIM SHADE, 0, PRIMITIVE, 0, 0, 0, 0, PRIMITIVE
 #define CC_TEX_PRIM TEXEL0, 0, PRIMITIVE, 0, TEXEL0, 0, PRIMITIVE, 0
+#define CC_DOUBLE COMBINED, 0, ENVIRONMENT, COMBINED, 0, 0, 0, COMBINED
 
 typedef struct Track {
     int anim;
@@ -355,7 +359,7 @@ static void shade(const UnitLight* L, const float n[3], u8 out[3]) {
     float d = n[0] * L->dir[0] + n[1] * L->dir[1] + n[2] * L->dir[2];
     if (d < 0.0f) d = 0.0f;
     for (int c = 0; c < 3; c++) {
-        float v = L->ambient[c] + L->sun[c] * d;
+        float v = (L->ambient[c] + L->sun[c] * d) * (LIGHT_GAIN * 0.5f);
         v += (255.0f - v) * L->flash;
         out[c] = (u8)(v >= 255.0f ? 255 : (v <= 0.0f ? 0 : (int)v));
     }
@@ -413,14 +417,18 @@ static Gfx* emit(Gfx* g, const HcFpModel* m, int lod, int base, int pass, u32 hu
             if (want == HC_FP_NO_TEXTURE) {
                 gDPPipeSync(g++);
                 gSPTexture(g++, 0, 0, 0, G_TX_RENDERTILE, G_OFF);
-                gDPSetCombineMode(g++, CC_SHADE_PRIM, CC_SHADE_PRIM);
+                if (pass == PASS_OPAQUE) {
+                    gDPSetCombineMode(g++, CC_SHADE_PRIM, CC_DOUBLE);
+                } else {
+                    gDPSetCombineMode(g++, CC_SHADE_PRIM, CC_SHADE_PRIM);
+                }
             } else {
                 g = set_texture(g, want);
                 gSPTexture(g++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
                 if (pass == PASS_BLENDED) {
                     gDPSetCombineMode(g++, CC_TEX_PRIM, CC_TEX_PRIM);
                 } else {
-                    gDPSetCombineMode(g++, CC_TEX_SHADE, CC_TEX_SHADE);
+                    gDPSetCombineMode(g++, CC_TEX_SHADE, CC_DOUBLE);
                 }
             }
         }
@@ -567,8 +575,9 @@ int hc_biped_view_draw(Gfx** opa, Gfx** xlu, GRAPH* graph, GAME_PLAY* play, cons
     gDPPipeSync(g++);
     gDPSetOtherMode(g++,
                     G_AD_DISABLE | G_CD_MAGICSQ | G_CK_NONE | G_TC_FILT | G_TF_BILERP | G_TT_NONE | G_TL_TILE |
-                        G_TD_CLAMP | G_TP_PERSP | G_CYC_1CYCLE | G_PM_NPRIMITIVE,
-                    G_AC_NONE | G_ZS_PIXEL | G_RM_AA_ZB_OPA_SURF | G_RM_AA_ZB_OPA_SURF2);
+                        G_TD_CLAMP | G_TP_PERSP | G_CYC_2CYCLE | G_PM_NPRIMITIVE,
+                    G_AC_NONE | G_ZS_PIXEL | G_RM_PASS | G_RM_AA_ZB_OPA_SURF2);
+    gDPSetEnvColor(g++, 255, 255, 255, 255);
     gSPLoadGeometryMode(g++, G_ZBUFFER | G_SHADE | G_SHADING_SMOOTH);
     int tex = -2;
     g = emit(g, m, lod, 0, PASS_OPAQUE, 0, &tex);
