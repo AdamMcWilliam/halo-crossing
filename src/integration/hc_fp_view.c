@@ -22,6 +22,8 @@
 #define GX_WRAP_REPEAT 1        /* GXTexWrapMode GX_REPEAT */
 #define OPA_RESERVE 8192        /* bytes kept free for the rest of the opaque list */
 #define FIRE_HOLD 0.2f          /* seconds after a shot that automatic fire keeps looping */
+#define SUN_SHARE 0.6f          /* how much of AC's sun light reaches the held weapon */
+#define TINT_FLOOR 0.3f
 
 #define CC_TEX_SHADE TEXEL0, 0, SHADE, 0, 0, 0, 0, TEXEL0
 #define CC_SHADE_PRIM SHADE, 0, PRIMITIVE, 0, 0, 0, 0, PRIMITIVE
@@ -57,12 +59,14 @@ static struct {
 
     float pos[MAX_VERTICES][3];
     u8 shade[MAX_VERTICES];
+    float tint[3];
 } s;
 
 void hc_fp_view_init(void) {
     if (s.tried) return;
     s.tried = 1;
     s.weapon = -1;
+    s.tint[0] = s.tint[1] = s.tint[2] = 1.0f;
     const char* dir = getenv("HC_HALO_ASSETS");
     char path[512], err[128];
     snprintf(path, sizeof(path), "%s/%s", dir && dir[0] ? dir : HC_HALO_ASSET_DIR, PACK_NAME);
@@ -331,7 +335,10 @@ static Gfx* draw_batch(Gfx* g, GRAPH* graph, const Gfx* opa_head, const HcFpMode
         o->v.flag = 0;
         o->v.tc[0] = to_s16((w->vertices[i].uv[0] - b->uv_offset[0]) * tw);
         o->v.tc[1] = to_s16((w->vertices[i].uv[1] - b->uv_offset[1]) * th);
-        o->v.cn[0] = o->v.cn[1] = o->v.cn[2] = s.shade[i];
+        for (int c = 0; c < 3; c++) {
+            float lit = (float)s.shade[i] * s.tint[c];
+            o->v.cn[c] = (u8)(lit >= 255.0f ? 255 : (int)lit);
+        }
         o->v.cn[3] = 255;
     }
     gSPVertex(g++, vb, b->vertex_count, 0);
@@ -345,9 +352,24 @@ static Gfx* draw_batch(Gfx* g, GRAPH* graph, const Gfx* opa_head, const HcFpMode
     return g;
 }
 
-Gfx* hc_fp_view_draw_opa(Gfx* g, GRAPH* graph, const HcView* v, const HaloUnit* p) {
+/* AC's ambient and sun colours this frame as a tint on the key-lit grey:
+ * 1 at AC's midday (ambient 80 80 150, sun 200 240 240), warm at dusk,
+ * dark blue at night but never so dark the weapon is lost. */
+static void light_tint(GAME_PLAY* play) {
+    static const float midday[3] = { 80.0f + 200.0f * SUN_SHARE, 80.0f + 240.0f * SUN_SHARE,
+                                     150.0f + 240.0f * SUN_SHARE };
+    const LightDiffuse* sun = &play->kankyo.sun_light.lights.diffuse;
+    const u8* amb = play->global_light.ambientColor;
+    for (int c = 0; c < 3; c++) {
+        float raw = ((float)amb[c] + (float)sun->color[c] * SUN_SHARE) / midday[c];
+        s.tint[c] = TINT_FLOOR + (1.0f - TINT_FLOOR) * hc_clampf(raw, 0.0f, 1.15f);
+    }
+}
+
+Gfx* hc_fp_view_draw_opa(Gfx* g, GRAPH* graph, GAME_PLAY* play, const HcView* v, const HaloUnit* p) {
     const HcFpModel* w = drawable(v, p);
     if (w == NULL) return g;
+    light_tint(play);
     skin_all(w, v);
     Gfx* start = g;
     g = load_matrix(g, graph, v);

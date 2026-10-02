@@ -266,9 +266,10 @@ static hv3 view_basis_point(const HcView* v, float f, float l, float u) {
     return r;
 }
 
-static Gfx* draw_viewmodel(Gfx* g, GRAPH* graph, const HaloSim* sim, const HcView* v, const HaloUnit* p) {
+static Gfx* draw_viewmodel(Gfx* g, GRAPH* graph, GAME_PLAY* play, const HaloSim* sim, const HcView* v,
+                           const HaloUnit* p) {
     const HaloWeaponState* w = &p->weapon;
-    if (hc_fp_view_available(w->id)) return hc_fp_view_draw_opa(g, graph, v, p);
+    if (hc_fp_view_available(w->id)) return hc_fp_view_draw_opa(g, graph, play, v, p);
     const HcModel* m = hc_model_first_person(w->id);
     if (m == NULL) return g;
     const HaloWeaponDef* wd = &g_halo_weapons[w->id];
@@ -463,7 +464,7 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
     }
     if (v->show_nav) opa = draw_debug_paths(opa, graph, sim);
     HaloUnit* p = halo_player(sim);
-    if (v->first_person && p && !p->dead && p->weapon.id != HALO_WEAPON_NONE) opa = draw_viewmodel(opa, graph, sim, v, p);
+    if (v->first_person && p && !p->dead && p->weapon.id != HALO_WEAPON_NONE) opa = draw_viewmodel(opa, graph, play, sim, v, p);
     SET_POLY_OPA_DISP(opa);
 
     xlu = draw_projectiles(xlu, graph, play, sim, v);

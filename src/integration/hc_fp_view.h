@@ -22,7 +22,7 @@ void hc_fp_view_update(const HaloUnit* player, float dt);
 #define HC_FP_VIEW_SCALE 0.25f
 
 /* opa: the opaque list (skins the mesh); then xlu for blended parts. */
-Gfx* hc_fp_view_draw_opa(Gfx* g, GRAPH* graph, const HcView* v, const HaloUnit* p);
+Gfx* hc_fp_view_draw_opa(Gfx* g, GRAPH* graph, GAME_PLAY* play, const HcView* v, const HaloUnit* p);
 Gfx* hc_fp_view_draw_xlu(Gfx* g, GRAPH* graph, const HcView* v, const HaloUnit* p);
 
 /* Muzzle in first-person space (wu: forward, left, up; unscaled). */
