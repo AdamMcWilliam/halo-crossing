@@ -18,5 +18,9 @@ include_directories(
 set_source_files_properties(${HC_SOURCES} PROPERTIES COMPILE_OPTIONS
     "-Wall;-Wno-unused-parameter;-Wno-missing-field-initializers;-Wno-unused-function;-Wno-missing-braces")
 
+# Output of tools/halo_import (the user's own Halo data; never committed).
+set_property(SOURCE ${HC_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS
+    "HC_HALO_ASSET_DIR=\"${HC_ROOT}/assets_local/halo/generated\"")
+
 list(LENGTH HC_SOURCES HC_SOURCE_COUNT)
 message(STATUS "Halo Crossing layer: ${HC_ROOT} (${HC_SOURCE_COUNT} sources)")

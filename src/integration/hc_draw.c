@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "graph.h"
+#include "hc_fp_view.h"
 #include "hc_gfx.h"
 #include "hc_models.h"
 #include "hc_world_scale.h"
@@ -245,6 +246,7 @@ static hv3 view_basis_point(const HcView* v, float f, float l, float u) {
 
 static Gfx* draw_viewmodel(Gfx* g, GRAPH* graph, const HaloSim* sim, const HcView* v, const HaloUnit* p) {
     const HaloWeaponState* w = &p->weapon;
+    if (hc_fp_view_available(w->id)) return hc_fp_view_draw_opa(g, graph, v, p);
     const HcModel* m = hc_model_first_person(w->id);
     if (m == NULL) return g;
     const HaloWeaponDef* wd = &g_halo_weapons[w->id];
@@ -443,6 +445,8 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
     xlu = hc_gfx_mode_xlu(xlu);
     xlu = draw_projectiles(xlu, graph, play, sim, v);
     xlu = draw_fx(xlu, graph, play, v);
+    if (v->first_person && p && !p->dead && hc_fp_view_available(p->weapon.id))
+        xlu = hc_fp_view_draw_xlu(xlu, graph, v, p);
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         const HaloUnit* u = &sim->units[i];
         if (!u->active || u->dead || u->is_player || u->kinematic || u->shield_flash <= 0.0f) continue;
@@ -463,8 +467,16 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
                 muzzle_l = b->l;
             }
         }
+        float fp[3];
+        float vm = VM_SCALE;
+        if (hc_fp_view_muzzle(p, fp)) {
+            front = fp[0];
+            muzzle_l = fp[1];
+            muzzle_u = fp[2];
+            vm = HC_FP_VIEW_SCALE;
+        }
         hv3 eye = hc_a2h_pos(v->eye);
-        hv3 m = hv3_add(eye, view_basis_point(v, front * VM_SCALE, muzzle_l * VM_SCALE, muzzle_u * VM_SCALE));
+        hv3 m = hv3_add(eye, view_basis_point(v, front * vm, muzzle_l * vm, muzzle_u * vm));
         u32 c = (hc_weapon_glow_rgba(p->weapon.id, 0xFFD27AFF) & 0xFFFFFF00) | 0xF0;
         float big = (p->weapon.id == HALO_WEAPON_ROCKET_LAUNCHER || p->weapon.id == HALO_WEAPON_SHOTGUN ||
                      p->weapon.id == HALO_WEAPON_SNIPER_RIFLE || p->weapon.id == HALO_WEAPON_FUEL_ROD)

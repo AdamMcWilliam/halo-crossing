@@ -7,7 +7,7 @@
 #include "sys_matrix.h"
 #include "THA_GA.h"
 
-#define HC_OPA_WORDS 32768
+#define HC_OPA_WORDS 65536 /* the imported viewmodel's vertices are allocated from its tail */
 #define HC_XLU_WORDS 16384
 #define HC_FONT_WORDS 8192
 #define HC_GFX_RESERVE 4 /* room for the closing gSPEndDisplayList */
