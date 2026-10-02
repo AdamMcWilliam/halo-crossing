@@ -51,5 +51,7 @@ void hc_draw_sky(GAME_PLAY* play, const HcView* view, float fov_y_deg);
 void hc_fx_from_event(HaloSim* sim, const HaloEvent* e);
 void hc_fx_update(float dt);
 void hc_fx_clear(void);
+/* A shower of gold bells (AC world position). */
+void hc_fx_bells(xyz_t pos);
 
 #endif

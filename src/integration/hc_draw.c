@@ -31,6 +31,8 @@ typedef struct HcFx {
     int beam;             /* draw a ribbon pos -> pos2 instead of a glow */
     xyz_t pos2;
     float rise;           /* AC units/s upward drift (smoke) */
+    xyz_t vel;            /* AC units/s, pulled down by `gravity` */
+    float gravity;
 } HcFx;
 
 #define HC_MAX_FX 160
@@ -68,10 +70,30 @@ void hc_fx_clear(void) {
 void hc_fx_update(float dt) {
     for (int i = 0; i < HC_MAX_FX; i++) {
         if (!s_fx[i].active) continue;
-        s_fx[i].age += dt;
-        s_fx[i].pos.y += s_fx[i].rise * dt;
-        if (s_fx[i].age >= s_fx[i].life) s_fx[i].active = 0;
+        HcFx* f = &s_fx[i];
+        f->age += dt;
+        f->vel.y -= f->gravity * dt;
+        f->pos.x += f->vel.x * dt;
+        f->pos.y += (f->vel.y + f->rise) * dt;
+        f->pos.z += f->vel.z * dt;
+        if (f->age >= f->life) f->active = 0;
     }
+}
+
+void hc_fx_bells(xyz_t pos) {
+    static unsigned int seed = 0x1234567u;
+    pos.y += 20.0f;
+    for (int i = 0; i < 28; i++) {
+        seed = seed * 1103515245u + 12345u;
+        float a = (float)((seed >> 8) & 0xFFFF) / 65536.0f * 2.0f * HC_PI;
+        float k = 0.4f + (float)((seed >> 20) & 0xFF) / 255.0f * 0.6f;
+        HcFx* f = fx_spawn(pos, 1.6f + k * 0.6f, 3.5f, 2.0f, i % 3 ? 0xFFD040FF : 0xFFF4B0FF);
+        f->vel.x = cosf(a) * 90.0f * k;
+        f->vel.z = sinf(a) * 90.0f * k;
+        f->vel.y = 140.0f + 90.0f * k;
+        f->gravity = 330.0f;
+    }
+    fx_spawn(pos, 0.5f, 10.0f, 60.0f, 0xFFE070C0);
 }
 
 static void explosion_fx(xyz_t p, int def, float radius) {

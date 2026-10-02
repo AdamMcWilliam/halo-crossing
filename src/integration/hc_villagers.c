@@ -17,13 +17,18 @@
 #define HV_DOWN_TIME 20.0f
 #define HV_LINE_TIME 2.4f
 #define HV_SPECIAL_BODY 1.0e6f    /* scripted NPCs can't go down */
+#define HV_NOOK_BODY 150.0f       /* a rocket, a sniper headshot, or about twenty AR rounds */
+#define HV_NOOK_DOWN_TIME 1.0e9f  /* stays down until the scene reloads */
 #define HV_HEAD_AC 52.0f          /* speech bubble height above the feet */
+#define HV_NOOK_RGB 0xFFD08000
 
 typedef struct HcVillager {
     int used;
     ACTOR* actor;
     mActor_name_t npc_id;
     int special;
+    int nook;
+    s16 down_yaw;
     int unit;
     HcVillagerState state;
     float state_time;
@@ -42,6 +47,9 @@ static HcVillager s_v[HV_MAX];
 static unsigned int s_pick = 0x9E37u;
 static int s_downed_total;
 static char s_summary[64];
+static int s_nook_kills;       /* survives scene changes, unlike everything above */
+static int s_nook_kill_pending;
+static xyz_t s_nook_kill_pos;
 
 /* ---- lines ----------------------------------------------------------------- */
 
@@ -75,6 +83,19 @@ static const char* k_special[] = {
     "No shooting near the merchandise!", "That goes on your loan, yes yes!", "Sir, this is a place of business!",
     "Please put that away, hm?",         "I'm calling the town hall!",
 };
+static const char* k_nook_hurt[] = {
+    "Hm? Hey! HEY!",           "That's going on your loan, yes yes!", "Is this about the mortgage?!",
+    "No refunds! NO REFUNDS!", "Customer service is CLOSED!",        "I'll double your interest!",
+    "Not in front of the register!", "Security! SECURITY!",
+};
+static const char* k_nook_down[] = {
+    "Yes... yes... no...",          "My... bells...",          "Who will... pay for... the renovations...",
+    "You still owe me... 39,800 Bells...", "The store... is closed... forever...",
+};
+static const char* k_nook_back[] = {
+    "Welcome back! I have excellent insurance, yes yes!", "Ah, you again. Prices just went up, hm?",
+    "Hm? Oh, a customer! Totally unrelated to last time!",
+};
 
 #define PICK(arr) pick_line(arr, (int)(sizeof(arr) / sizeof(arr[0])))
 
@@ -106,6 +127,13 @@ void hc_villagers_set_treat_all(int on) {
 
 static int is_villager_profile(s16 id) {
     return s_treat_all || id == mAc_PROFILE_NPC || id == mAc_PROFILE_NPC2 || id == mAc_PROFILE_NORMAL_NPC;
+}
+
+/* Every storefront Tom Nook runs, plus his outdoor intro self. */
+static int is_nook_profile(s16 id) {
+    return id == mAc_PROFILE_NPC_SHOP_MASTER || id == mAc_PROFILE_NPC_SHOP_MASTERSP ||
+           id == mAc_PROFILE_NPC_CONV_MASTER || id == mAc_PROFILE_NPC_SUPER_MASTER ||
+           id == mAc_PROFILE_NPC_DEPART_MASTER;
 }
 
 void hc_villagers_reset(void) {
@@ -142,11 +170,16 @@ static HcVillager* adopt(HaloSim* sim, ACTOR* a) {
         v->used = 1;
         v->actor = a;
         v->npc_id = a->npc_id;
-        v->special = !is_villager_profile(a->id);
+        v->nook = is_nook_profile(a->id);
+        v->special = !v->nook && !is_villager_profile(a->id);
         v->unit = u;
         v->last_pos = p;
         v->puppet = a->world.position;
         if (v->special) sim->units[u].body = HV_SPECIAL_BODY;
+        if (v->nook) {
+            sim->units[u].body = HV_NOOK_BODY;
+            if (s_nook_kills > 0) say(v, PICK(k_nook_back), HV_NOOK_RGB, 1);
+        }
         return v;
     }
     return NULL;
@@ -158,6 +191,7 @@ static void set_state(HcVillager* v, HcVillagerState s, float len) {
     if ((s == HC_VILLAGER_PANICKING || s == HC_VILLAGER_DOWN) && v->state != HC_VILLAGER_PANICKING &&
         v->state != HC_VILLAGER_DOWN && v->actor)
         v->puppet = v->actor->world.position;
+    if (s == HC_VILLAGER_DOWN && v->actor) v->down_yaw = v->actor->shape_info.rotation.y;
     v->state = s;
     v->state_time = 0.0f;
     v->state_len = len;
@@ -240,15 +274,24 @@ void hc_villagers_event(HaloSim* sim, const HaloEvent* e) {
                 break;
             }
             if (v->state == HC_VILLAGER_DOWN) break;
-            say(v, PICK(k_hurt), 0xFF8A7000, 1);
+            if (v->nook) say(v, PICK(k_nook_hurt), HV_NOOK_RGB, 0);
+            else say(v, PICK(k_hurt), 0xFF8A7000, 1);
             panic_from(v, attacker_pos(sim, e), NULL);
             break;
         }
         case HALO_EV_UNIT_KILLED: {
             HcVillager* v = by_unit(e->unit);
             if (!v) break;
-            set_state(v, HC_VILLAGER_DOWN, HV_DOWN_TIME);
-            say(v, PICK(k_down), 0xD0D0D000, 1);
+            if (v->nook) {
+                set_state(v, HC_VILLAGER_DOWN, HV_NOOK_DOWN_TIME);
+                say(v, PICK(k_nook_down), HV_NOOK_RGB, 1);
+                s_nook_kills++;
+                s_nook_kill_pending = 1;
+                s_nook_kill_pos = v->puppet;
+            } else {
+                set_state(v, HC_VILLAGER_DOWN, HV_DOWN_TIME);
+                say(v, PICK(k_down), 0xD0D0D000, 1);
+            }
             s_downed_total++;
             /* Everyone who saw it runs. */
             for (int i = 0; i < HV_MAX; i++) {
@@ -348,6 +391,8 @@ void hc_villagers_post(GAME_PLAY* play, HaloSim* sim, float dt) {
                 float k = hc_clampf(v->state_time / 0.35f, 0.0f, 1.0f);
                 a->shape_info.rotation.x = (s16)(-0x3C00 * k);
                 a->shape_info.rotation.z = 0;
+                /* Shop scripts keep turning to face the customer. */
+                a->shape_info.rotation.y = a->world.angle.y = v->down_yaw;
                 if (v->state_time > v->state_len) {
                     halo_revive_unit(sim, v->unit);
                     set_state(v, HC_VILLAGER_NORMAL, 0.0f);
@@ -388,6 +433,22 @@ int hc_villagers_count_state(HcVillagerState s) {
 
 int hc_villagers_downed_total(void) {
     return s_downed_total;
+}
+
+int hc_villagers_is_nook(int unit) {
+    HcVillager* v = by_unit(unit);
+    return v != NULL && v->nook;
+}
+
+int hc_villagers_nook_kills(void) {
+    return s_nook_kills;
+}
+
+int hc_villagers_take_nook_kill(xyz_t* pos) {
+    if (!s_nook_kill_pending) return 0;
+    s_nook_kill_pending = 0;
+    if (pos) *pos = s_nook_kill_pos;
+    return 1;
 }
 
 const char* hc_villagers_summary(void) {

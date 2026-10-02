@@ -2,8 +2,9 @@
  * in the scene gets a kinematic, neutral hit volume in the Halo sim that
  * follows it. Gunfire, explosions and Covenant nearby make villagers panic
  * and run (the layer takes over their position), then hide; enough damage
- * knocks them flat until they get back up. Shopkeepers and other scripted
- * NPCs only flinch and complain, so their scripts never see a missing actor. */
+ * knocks them flat until they get back up. Scripted NPCs only flinch and
+ * complain, so their scripts never see a missing actor; Tom Nook is the
+ * exception. */
 #ifndef HC_VILLAGERS_H
 #define HC_VILLAGERS_H
 
@@ -42,5 +43,12 @@ const char* hc_villagers_summary(void);
 
 int hc_villagers_count_state(HcVillagerState s);
 int hc_villagers_downed_total(void);
+
+/* Tom Nook is the one scripted NPC who can be put down, and he stays down
+ * until the scene reloads. */
+int hc_villagers_is_nook(int unit);
+int hc_villagers_nook_kills(void);
+/* Once per kill: nonzero and where he fell. */
+int hc_villagers_take_nook_kill(xyz_t* pos);
 
 #endif
