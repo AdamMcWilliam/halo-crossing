@@ -876,10 +876,19 @@ void hc_draw_hud(GAME_PLAY* play, HaloSim* sim, const HcView* v, const HcHudText
             const HcWorldLabel* l = &text->labels[i];
             float sx, sy;
             if (l->alpha <= 0.0f || !project(play, l->pos, &sx, &sy)) continue;
-            float tw = (float)pc_text_width(l->text) * 0.4f;
+            float size = l->shout ? 0.55f : 0.4f;
+            if (l->shout) {
+                sx += sinf(v->time * 61.0f + (float)i) * 1.2f;
+                sy += cosf(v->time * 53.0f) * 0.9f - 4.0f;
+            }
+            float tw = (float)pc_text_width(l->text) * size;
+            if (l->shout) {
+                sx = hc_clampf(sx, tw * 0.5f + 2.0f, 318.0f - tw * 0.5f);
+                sy = hc_clampf(sy, 34.0f, 200.0f);
+            }
             int a = (int)(hc_clampf(l->alpha, 0.0f, 1.0f) * 255.0f);
-            pc_text_draw(game, l->text, sx - tw * 0.5f + 0.6f, sy - 7.4f, 0x10, 0x10, 0x10, a / 2, 0.4f);
-            pc_text_draw(game, l->text, sx - tw * 0.5f, sy - 8.0f, HC_R(l->rgb), HC_G(l->rgb), HC_B(l->rgb), a, 0.4f);
+            pc_text_draw(game, l->text, sx - tw * 0.5f + 0.6f, sy - 7.4f, 0x10, 0x10, 0x10, a / 2, size);
+            pc_text_draw(game, l->text, sx - tw * 0.5f, sy - 8.0f, HC_R(l->rgb), HC_G(l->rgb), HC_B(l->rgb), a, size);
         }
     }
     if (p && v->first_person && p->dead) {

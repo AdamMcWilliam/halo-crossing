@@ -31,6 +31,7 @@ typedef struct HcWorldLabel {
     char text[48];
     float alpha;
     u32 rgb;              /* 0xRRGGBB00 */
+    int shout;            /* bigger, shaking letters */
 } HcWorldLabel;
 
 typedef struct HcHudText {
