@@ -34,6 +34,25 @@ build.bat test      # headless Halo sandbox tests, no game data needed
 port with `-DHC_ROOT=<repo>`, builds `build/host/bin/AnimalCrossing.exe`, and
 hard-links your disc image into `build/host/bin/rom/`.
 
+### Halo assets (optional)
+
+With your own Halo: Combat Evolved Xbox image (XISO or a full redump), import
+the Chief's first-person arms and weapons:
+
+```
+pip install numpy
+python tools/import_halo.py --iso "D:/dumps/Halo - Combat Evolved (USA).iso"
+```
+
+This reads `maps/bloodgulch.map` from the image and writes
+`assets_local/halo/generated/fp_weapons.hcpk` (about 9 MB, git-ignored): the
+arms merged with each weapon, GameCube-format textures, and the idle, fire,
+ready, reload, grenade, overheat and posing animations. The game loads it at
+startup (`HC_HALO_ASSETS=<dir>` points elsewhere) and draws the real models
+for every weapon it has. The Fuel Rod Gun has no first-person model on Xbox,
+so it keeps the placeholder boxes, as does everything when no pack is
+present. The debug overlay's gfx line ends in `vm halo` or `vm boxes`.
+
 Environment switches:
 
 | Variable | Effect |
@@ -116,14 +135,17 @@ Overlay lines, top to bottom:
 2. Halo and AC position
 3. Weapon, ammo, shield, health, grenades
 4. Covenant alive by AI state (and how many are asleep), kills, villager states
-5. Display-list arena use and overflows, and collision queries this frame
+5. Display-list arena use and overflows, collision queries this frame, and
+   whether the viewmodel is the imported Halo model or placeholder boxes
 6. Latest combat events
 
 ## Testing
 
 * `build.bat test` runs `tests/halo_sim_test.c` against a synthetic flat world.
   It covers movement, shields, AR rate of fire and spread, a Grunt fight, and
-  plasma grenade stick. Set `HALO_TEST_VERBOSE=1` for traces.
+  plasma grenade stick. Set `HALO_TEST_VERBOSE=1` for traces. It also runs
+  `tests/fp_pack_test.c`, which poses and skins every animation of every
+  weapon in your imported pack (skipped if you haven't imported one).
 * `tools/devctl.py` drives the running game for smoke tests: focus, held keys,
   mouse and screenshots. `tools/scripts/new_game_to_station.txt` plays a
   fresh save's intro until you stand on the town's train platform (about 5
