@@ -7,7 +7,10 @@ grenades, Covenant AI, damage and HUD.
 
 No retail data lives in this repository. The host reads the user's own disc image
 from `assets_local/`, and every Halo value is a documented number in
-`src/halo/halo_tuning.c`. Importing tags from a user-supplied dump comes later.
+`src/halo/halo_tuning.c`. Halo's look and sound come from the user's own Xbox
+image: `tools/import_halo.py` converts models, animations, bitmaps and sounds
+into packs under `assets_local/halo/generated/`, and the game falls back to
+placeholders for anything missing. Gameplay numbers are not imported yet.
 
 ## 1. Inputs
 
@@ -59,10 +62,12 @@ standing next to Tom Nook last.
 | Biped movement, weapon trigger state machine, projectile update, shield/body damage, panic and flee | **Reimplemented** in `src/halo/` from halocea's algorithms; no code copied |
 | Collision, ground and line of sight | **Adapter** `hc_ac_world.c` over `mCoBG_VirtualBGCheck`, `mCoBG_LineCheck_RemoveFg`, `mCoBG_GetBgY_*` |
 | Pathfinding and cover | **Adapter** with A* over AC's 40-unit tile grid, using collision for edges |
-| Rendering | **Adapter** `hc_gfx.c`: AC display lists in private arenas; procedural box models (`hc_models.c`) until assets are imported |
+| Rendering | **Adapter** `hc_gfx.c`: AC display lists in private arenas. Imported Halo models are skinned on the CPU and lit by AC's sun and ambient light (`hc_fp_view.c`, `hc_biped_view.c`); procedural boxes (`hc_models.c`) stand in for anything not imported |
+| HUD | **Imported** Halo HUD bitmaps and layout (`hud_pack.py`), drawn as texture rectangles by `hc_hud_view.c`; the text HUD in `hc_draw.c` covers what the pack lacks |
 | Input | **Adapter** `hc_input.c`: SDL mouse/keyboard to `HaloUnitControl`; the AC pad is muted while the Halo camera is live |
 | Camera | **Adapter**: overrides `play->view` after AC's camera runs |
-| Audio, villager reactions | Later (AC sound effects and villager states) |
+| Audio | **Imported** Halo sounds (`sound_pack.py`), mixed in 3D on a separate SDL audio device by `hc_audio.c` / `hc_sound.c` |
+| Villager reactions | **Adapter** `hc_villagers.c`: neutral hit volumes that follow AC's NPC actors; panic, hiding, knock-downs, Tom Nook's death |
 | Halo AI behaviour trees, encounters, firing positions, animation graphs, vehicles | **Simplified**: a state machine (idle, alert, combat, search, flee, dead) |
 
 ## 4. Layout
@@ -88,14 +93,21 @@ halo-crossing/
     hc_ac_world.c          collision, raycast, ground, can_walk, A*, cover
     hc_gfx.c               display-list arenas and primitives
     hc_models.c            placeholder Covenant/Chief/viewmodel geometry
-    hc_draw.c              world pass, sky, HUD
+    hc_draw.c              world pass, sky, placeholder HUD
+    hc_fp_pack.c           loader, posing and skinning for the model packs
+    hc_fp_view.c           first-person arms and weapon
+    hc_biped_view.c        Grunts, Elites and their weapons
+    hc_hud_pack.c, hc_hud_view.c  Halo's HUD
+    hc_sound.c, hc_audio.c sound pack, 3D mixer, sim events to sounds
+    hc_villagers.c         villagers and Tom Nook in the firefight
     hc_input.c             SDL input to Halo controls
     hc_hooks.h             hook signatures called from the host
   src/prototype/           Milestone glue: hooks, camera, debug keys, overlay
-  src/animal_crossing/     (milestone 3+) AC-side features: villager panic, sound cues
-  tests/                   headless sandbox tests (gcc, no game data)
+  tests/                   headless tests (gcc; pack checks need imported data)
   tools/                   patching, disc check, references, devctl smoke driver
-  assets_local/            user's own game data (git-ignored)
+    import_halo.py         reads the user's Halo Xbox image, writes the packs
+    halo_import/           XDVDFS, cache map, model, animation, bitmap and sound readers
+  assets_local/            user's own game data and generated packs (git-ignored)
 ```
 
 ## 5. Frame flow
@@ -111,7 +123,7 @@ Each host frame (`play_main`):
 3. `Game_play_draw`: AC actors draw, then **`hc_hook_draw_world`** (units,
    viewmodel, projectiles, effects).
 4. After the frame is drawn, **`hc_hook_draw_hud`** (shields, health, ammo,
-   reticle, motion tracker, text).
+   grenades, reticle, motion sensor, damage arcs, zoom mask, text).
 
 SDL events go through `hc_hook_sdl_event` before the port's own handling.
 Pad 0 passes through `hc_hook_filter_pad`.
@@ -133,7 +145,7 @@ buffers work.
 | AC's camera and scripts fight a free FPS camera | Override after `Camera2_process`; hand control back to AC whenever a message window is open |
 | AC state assumptions (talking, demos, scene changes) | Hooks reset the sandbox per scene; the AC player is moved but never despawned |
 | Authentic Halo numbers live in tags, not in the reference code | Documented values now, each tagged `[engine]`/`[approx]`; tag import later |
-| Copyright | Nothing retail in git: user dumps in `assets_local/`, host data read from the user's disc |
+| Copyright | Nothing retail in git: user dumps in `assets_local/`, host data read from the user's disc, Halo packs generated locally from the user's image |
 | 32-bit MinGW only | The sandbox is portable C; only the host needs i686 |
 
 ## 7. Milestones
@@ -151,9 +163,5 @@ buffers work.
 
 ## 8. Debug keys
 
-F1 camera mode, F2 collision volumes, F3 AI labels, F4 nav paths, F5 spawn
-Grunt, F6 spawn Elite, F7 give AR and refill, F8 infinite shields, F9 kill all
-Covenant, F10 toggle overlay. The overlay shows FPS, tick, camera mode, scene,
-AC player state, Halo and AC coordinates, weapon, ammo, shield, health,
-grenades, Covenant count with AI states, display-list and collision-query
-usage, and the last combat events.
+See [README_DEV.md](../README_DEV.md#debug-keys) for the debug keys and the
+overlay.

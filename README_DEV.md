@@ -37,21 +37,33 @@ hard-links your disc image into `build/host/bin/rom/`.
 ### Halo assets (optional)
 
 With your own Halo: Combat Evolved Xbox image (XISO or a full redump), import
-the Chief's first-person arms and weapons:
+Halo's models, sounds and HUD:
 
 ```
 pip install numpy
 python tools/import_halo.py --iso "D:/dumps/Halo - Combat Evolved (USA).iso"
+python tools/import_halo.py --iso <image> --only hud --only sounds   # rebuild some packs
 ```
 
-This reads `maps/bloodgulch.map` from the image and writes
-`assets_local/halo/generated/fp_weapons.hcpk` (about 9 MB, git-ignored): the
-arms merged with each weapon, GameCube-format textures, and the idle, fire,
-ready, reload, grenade, overheat and posing animations. The game loads it at
-startup (`HC_HALO_ASSETS=<dir>` points elsewhere) and draws the real models
-for every weapon it has. The Fuel Rod Gun has no first-person model on Xbox,
-so it keeps the placeholder boxes, as does everything when no pack is
-present. The debug overlay's gfx line ends in `vm halo` or `vm boxes`.
+The importer reads the image in place (it is never copied) and writes four
+git-ignored packs to `assets_local/halo/generated/`:
+
+| Pack | From | Contents |
+|---|---|---|
+| `fp_weapons.hcpk` (9 MB) | bloodgulch, c40 | The Chief's arms merged with each weapon, GameCube-format textures, and the idle, fire, ready, reload, grenade, overheat, posing and ammunition animations |
+| `bipeds.hcpk` (3 MB) | b30, c40 | Grunts and Elites (three LODs, colour change baked in), their animations, and the Covenant weapons they carry |
+| `sounds.hcpk` (19 MB) | bloodgulch, b30, c40 | Weapon, impact, explosion, shield and Covenant dialogue sounds, decoded from Xbox ADPCM |
+| `hud.hcpk` (1 MB) | bloodgulch, c20, d20 | Halo's HUD: shield and health meters, motion sensor, weapon and grenade panels with digits, reticles, warnings, damage arcs and zoom masks |
+
+The game loads whatever is present at startup (`HC_HALO_ASSETS=<dir>` points
+elsewhere); anything missing keeps the placeholder boxes, beeps and HUD. The
+Xbox discs have no first-person Fuel Rod Gun, so the importer carries the
+Grunts' third-person gun on the Rocket Launcher's first-person rig. The
+needler's needles empty out of the gun as you fire. The viewmodel and the
+Covenant are lit by Animal Crossing's time of day. Re-run the importer after
+pulling changes to `tools/halo_import/`: the game rejects packs in an older
+layout, and the debug overlay shows what loaded (`vm halo` or `vm boxes`,
+`cov` drawn/culled, `snd` voices/played/lines).
 
 Environment switches:
 
@@ -59,11 +71,14 @@ Environment switches:
 |---|---|
 | `HC_FIRST_PERSON=1` | Start in the Halo camera |
 | `HC_AUTOSPAWN=1` | Spawn a Grunt the first time the Halo camera goes live |
+| `HC_AUTOSPAWN=2` | Turn round and spawn a Grunt and an Elite close by, held still for a few seconds (model checks) |
 | `HC_INVASION=0` | Don't populate the town with Covenant squads on entry |
 | `HC_INVINCIBLE=0` | Start mortal (the Chief is invincible by default; F8 toggles) |
 | `HC_NO_CAPTURE=1` | Never capture the mouse (for unattended runs) |
 | `HC_EVENT_LOG=<path>` | Append combat events to a text file |
 | `HC_ATTRACT=1` | Self-playing tour: cycles every weapon every 3 s, aims at the nearest visible target, keeps a Covenant in view, invincible. Only runs while the mouse isn't captured. |
+| `HC_ATTRACT_WEAPON=n` | Keep the tour on weapon n (1–10, the order below) |
+| `HC_AUDIO_DUMP=<path>` | Mix Halo sounds into a raw 44.1 kHz 16-bit stereo file instead of the audio device |
 | `HC_VILLAGER_ALL=1` | Treat scripted NPCs (Rover, Porter, shopkeepers) as shootable villagers too |
 | `HC_SHOP_HOURS=1` | Keep Nook's real opening hours (by default his shop never closes) |
 | `HC_WARP=shop` | Three seconds into the town, walk the Chief through Nook's shop door (unattended checks) |
@@ -145,8 +160,10 @@ Overlay lines, top to bottom:
 2. Halo and AC position
 3. Weapon, ammo, shield, health, grenades
 4. Covenant alive by AI state (and how many are asleep), kills, villager states
-5. Display-list arena use and overflows, collision queries this frame, and
-   whether the viewmodel is the imported Halo model or placeholder boxes
+5. Display-list arena use and overflows, collision queries this frame,
+   whether the viewmodel is the imported Halo model or placeholder boxes,
+   imported Covenant drawn/culled and vertices skinned, and sound voices
+   playing / played / dialogue lines
 6. Latest combat events
 
 ## Testing
@@ -155,7 +172,9 @@ Overlay lines, top to bottom:
   It covers movement, shields, AR rate of fire and spread, a Grunt fight, and
   plasma grenade stick. Set `HALO_TEST_VERBOSE=1` for traces. It also runs
   `tests/fp_pack_test.c`, which poses and skins every animation of every
-  weapon in your imported pack (skipped if you haven't imported one).
+  weapon and Covenant model in your imported packs, plus `sound_test.c` and
+  `hud_pack_test.c`, which validate and decode the sound and HUD packs (each
+  check is skipped for a pack you haven't imported).
 * `tools/devctl.py` drives the running game for smoke tests: focus, held keys,
   mouse and screenshots. `tools/scripts/new_game_to_station.txt` plays a
   fresh save's intro until you stand on the town's train platform (about 5

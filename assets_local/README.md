@@ -15,5 +15,6 @@ revision. The build scripts link `build/host/bin/rom` to
 `assets_local/animal_crossing/`, so the image is never copied.
 
 `tools/import_halo.py --iso <your Halo: Combat Evolved Xbox image>` reads the
-disc in place and writes `halo/generated/fp_weapons.hcpk` (the Chief's arms and
-first-person weapons). The Halo image itself can stay wherever it is.
+disc in place and writes `halo/generated/`: `fp_weapons.hcpk` (the Chief's arms
+and first-person weapons), `bipeds.hcpk` (Grunts, Elites and their weapons),
+`sounds.hcpk` and `hud.hcpk`. The Halo image itself can stay wherever it is.
