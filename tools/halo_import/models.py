@@ -11,6 +11,8 @@ s8 node0*3, s8 node1*3, s16 node0 weight (/32767).
 import numpy as np
 
 NODE_SIZE = 156
+MARKER_SIZE = 64
+MARKER_INSTANCE_SIZE = 32
 GEOMETRY_SIZE = 48
 PART_SIZE = 0x68
 REGION_SIZE = 76
@@ -66,6 +68,22 @@ class Model:
     def __init__(self, path, u_scale, v_scale, nodes, parts, shaders):
         self.path, self.u_scale, self.v_scale = path, u_scale, v_scale
         self.nodes, self.parts, self.shaders = nodes, parts, shaders
+
+
+def read_markers(m, tag):
+    """{name: [(node, translation)]}. Marker: name[32] ... +0x34 instances block;
+    instance: s8 region, s8 permutation, s8 node, pad, float3 translation, quaternion."""
+    o = m.tag_data(tag)
+    out = {}
+    n, mk = m.block(o + 0xAC)
+    for i in range(n):
+        e = mk + i * MARKER_SIZE
+        name = bytes(m.m[e:e + 32]).split(b"\0", 1)[0].decode("latin-1")
+        n_inst, inst = m.block(e + 0x34)
+        out[name] = [(m.unpack("b", inst + k * MARKER_INSTANCE_SIZE + 2)[0],
+                      np.array(m.unpack("3f", inst + k * MARKER_INSTANCE_SIZE + 4), np.float32))
+                     for k in range(n_inst)]
+    return out
 
 
 def _read_part(m, p):
