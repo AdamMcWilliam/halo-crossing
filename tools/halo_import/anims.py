@@ -3,8 +3,10 @@
 Main struct: +0x48 first-person weapons block, +0x68 nodes (64 bytes each),
 +0x74 animations (180 bytes each). Animation element:
   +0x00 name[32]  +0x20 u16 type (0 base, 1 overlay, 2 replacement)
-  +0x22 u16 frame count  +0x24 u16 frame size  +0x2C u16 node count
-  +0x3A u16 flags (bit 0: compressed)
+  +0x22 u16 frame count  +0x24 u16 frame size
+  +0x26 u16 frame info type (0 none, 1 dx dy, 2 dx dy dyaw, 3 dx dy dz dyaw)
+  +0x2C u16 node count  +0x3A u16 flags (bit 0: compressed)
+  +0x48 data ref frame info (root motion, one delta per frame)
   +0x5C u32[2] translation flags  +0x6C u32[2] rotation flags  +0x7C u32[2] scale flags
   +0x8C data ref default data  +0xA0 data ref frame data
 Per frame, per node in order: [rotation s16 x4 /32767 if animated]
@@ -24,12 +26,13 @@ class AnimNode:
 
 
 class Animation:
-    def __init__(self, name, kind, frames, rotations, translations, scales):
+    def __init__(self, name, kind, frames, rotations, translations, scales, root=None):
         self.name, self.kind = name, kind
         self.frames = frames
         self.rotations = rotations        # (frames, nodes, 4) i, j, k, w
         self.translations = translations  # (frames, nodes, 3)
         self.scales = scales              # (frames, nodes)
+        self.root = root                  # (frames, 4) dx, dy, dz, dyaw per frame, or None
 
 
 class AnimGraph:
@@ -97,7 +100,24 @@ def _read_animation(m, e, n_nodes):
                 p += 4
     norm = np.linalg.norm(rots, axis=2, keepdims=True)
     rots = rots / np.maximum(norm, 1e-6)
-    return Animation(name, kind, frames, rots, transl, scales)
+    return Animation(name, kind, frames, rots, transl, scales, _read_root(m, e, frames))
+
+
+_ROOT_FIELDS = {1: ("dx", "dy"), 2: ("dx", "dy", "dyaw"), 3: ("dx", "dy", "dz", "dyaw")}
+
+
+def _read_root(m, e, frames):
+    fields = _ROOT_FIELDS.get(m.unpack("H", e + 0x26)[0])
+    if fields is None:
+        return None
+    size, off = m.data_ref(e + 0x48)
+    if size < frames * 4 * len(fields):
+        return None
+    raw = np.frombuffer(m.m, "<f4", frames * len(fields), off).reshape(frames, len(fields))
+    root = np.zeros((frames, 4), np.float32)
+    for c, f in enumerate(fields):
+        root[:, ("dx", "dy", "dz", "dyaw").index(f)] = raw[:, c]
+    return root
 
 
 def read_anim_graph(m, tag):

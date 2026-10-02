@@ -92,6 +92,43 @@ def unswizzle(data, w, h, bpp):
     return src[idx.reshape(-1)].reshape(h, w, bpp)
 
 
+def encode_dxt1(img):
+    """(h, w, 4) uint8 RGBA, h and w multiples of 4 -> opaque DXT1 bytes.
+    Endpoints span each block's principal colour axis."""
+    h, w = img.shape[:2]
+    blocks = img[..., :3].reshape(h // 4, 4, w // 4, 4, 3).transpose(0, 2, 1, 3, 4).reshape(-1, 16, 3)
+    px = blocks.astype(np.float32)
+    mean = px.mean(1, keepdims=True)
+    d = px - mean
+    cov = np.einsum("nki,nkj->nij", d, d)
+    axis = np.linalg.eigh(cov)[1][:, :, 2]                       # largest eigenvector
+    proj = np.einsum("nki,ni->nk", d, axis)
+    lo = mean[:, 0] + axis * proj.min(1, keepdims=True)
+    hi = mean[:, 0] + axis * proj.max(1, keepdims=True)
+
+    def to565(c):
+        c = np.clip(np.round(c), 0, 255).astype(np.int32)
+        return ((c[:, 0] * 31 + 127) // 255 << 11) | ((c[:, 1] * 63 + 127) // 255 << 5) | ((c[:, 2] * 31 + 127) // 255)
+
+    c0, c1 = to565(hi), to565(lo)
+    swap = c0 < c1
+    c0, c1 = np.where(swap, c1, c0), np.where(swap, c0, c1)
+    same = c0 == c1
+    c1 = np.where(same & (c0 > 0), c0 - 1, c1)   # keep four-colour mode (c0 > c1)
+    c0 = np.where(same & (c0 == 0), 1, c0)
+    p0, p1 = _565(c0), _565(c1)
+    pal = np.stack([p0, p1, (2 * p0 + p1) // 3, (p0 + 2 * p1) // 3], axis=1).astype(np.float32)
+    dist = ((px[:, :, None, :] - pal[:, None, :, :]) ** 2).sum(-1)
+    idx = dist.argmin(2).astype(np.uint32)
+    word = (idx << (2 * np.arange(16, dtype=np.uint32))).sum(1).astype(np.uint32)
+    out = np.zeros((len(px), 8), np.uint8)
+    out[:, 0], out[:, 1] = c0 & 0xFF, c0 >> 8
+    out[:, 2], out[:, 3] = c1 & 0xFF, c1 >> 8
+    for i in range(4):
+        out[:, 4 + i] = (word >> (8 * i)) & 0xFF
+    return out.tobytes()
+
+
 def dxt1_to_cmpr(data, w, h):
     """Lossless DXT1 -> GameCube CMPR. w, h must be multiples of 8."""
     bw, bh = w // 4, h // 4

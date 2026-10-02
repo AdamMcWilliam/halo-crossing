@@ -70,9 +70,10 @@ class Model:
         self.nodes, self.parts, self.shaders = nodes, parts, shaders
 
 
-def read_markers(m, tag):
-    """{name: [(node, translation)]}. Marker: name[32] ... +0x34 instances block;
-    instance: s8 region, s8 permutation, s8 node, pad, float3 translation, quaternion."""
+def read_markers(m, tag, with_rotation=False):
+    """{name: [(node, translation[, rotation])]}. Marker: name[32] ... +0x34 instances
+    block; instance: s8 region, s8 permutation, s8 node, pad, float3 translation,
+    quaternion (i, j, k, w)."""
     o = m.tag_data(tag)
     out = {}
     n, mk = m.block(o + 0xAC)
@@ -80,9 +81,14 @@ def read_markers(m, tag):
         e = mk + i * MARKER_SIZE
         name = bytes(m.m[e:e + 32]).split(b"\0", 1)[0].decode("latin-1")
         n_inst, inst = m.block(e + 0x34)
-        out[name] = [(m.unpack("b", inst + k * MARKER_INSTANCE_SIZE + 2)[0],
-                      np.array(m.unpack("3f", inst + k * MARKER_INSTANCE_SIZE + 4), np.float32))
-                     for k in range(n_inst)]
+        items = []
+        for k in range(n_inst):
+            p = inst + k * MARKER_INSTANCE_SIZE
+            item = (m.unpack("b", p + 2)[0], np.array(m.unpack("3f", p + 4), np.float32))
+            if with_rotation:
+                item += (np.array(m.unpack("4f", p + 16), np.float32),)
+            items.append(item)
+        out[name] = items
     return out
 
 
@@ -107,7 +113,8 @@ def _geometry_parts(m, geo):
     return [_read_part(m, parts + i * PART_SIZE) for i in range(n_parts)]
 
 
-def read_model(m, tag):
+def read_model(m, tag, lod=None):
+    """lod None: each region's most detailed geometry; otherwise 0 (superlow) .. 4 (superhigh)."""
     o = m.tag_data(tag)
     u_scale, v_scale = m.unpack("2f", o + 0x30)
     if u_scale == 0.0:
@@ -126,14 +133,15 @@ def read_model(m, tag):
         nodes.append(Node(name, nxt, child, parent, t, q))
 
     n_geo, geo = m.block(o + 0xD0)
-    # Highest-detail geometry of each region's first permutation.
+    # One geometry per region, from its first permutation.
     wanted = []
     n_reg, reg = m.block(o + 0xC4)
     for r in range(n_reg):
         n_perm, perm = m.block(reg + r * REGION_SIZE + 0x40)
         if n_perm:
-            lods = m.unpack("5h", perm + 0x40)
-            g = next((x for x in reversed(lods) if 0 <= x < n_geo), -1)
+            lods = m.unpack("5h", perm + 0x40)  # superlow .. superhigh
+            order = reversed(lods) if lod is None else [lods[lod]] + list(reversed(lods))
+            g = next((x for x in order if 0 <= x < n_geo), -1)
             if g >= 0 and g not in wanted:
                 wanted.append(g)
     if not wanted:
