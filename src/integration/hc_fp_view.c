@@ -66,7 +66,7 @@ void hc_fp_view_init(void) {
     const char* dir = getenv("HC_HALO_ASSETS");
     char path[512], err[128];
     snprintf(path, sizeof(path), "%s/%s", dir && dir[0] ? dir : HC_HALO_ASSET_DIR, PACK_NAME);
-    if (hc_fp_pack_load(&s.pack, path, err, sizeof(err))) {
+    if (hc_fp_pack_load(&s.pack, path, "HCFP", HC_FP_WEAPON_SLOTS, HC_FP_ANIM_COUNT, err, sizeof(err))) {
         int n = 0;
         for (int i = 0; i < HC_FP_WEAPON_SLOTS; i++) n += s.pack.has[i];
         s.loaded = 1;
@@ -82,8 +82,8 @@ const char* hc_fp_view_status(void) {
     return s.status;
 }
 
-static const HcFpWeapon* weapon_for(HaloWeaponId id) {
-    return s.loaded ? hc_fp_pack_weapon(&s.pack, (int)id) : NULL;
+static const HcFpModel* weapon_for(HaloWeaponId id) {
+    return s.loaded ? hc_fp_pack_model(&s.pack, (int)id) : NULL;
 }
 
 int hc_fp_view_available(HaloWeaponId id) {
@@ -98,19 +98,19 @@ void hc_fp_view_event(const HaloSim* sim, const HaloEvent* e) {
 
 /* ---- animation ------------------------------------------------------------- */
 
-static int has(const HcFpWeapon* w, HcFpAnim a) {
+static int has(const HcFpModel* w, HcFpAnim a) {
     return w->anim_frames[a] > 0;
 }
 
-static float last_frame(const HcFpWeapon* w, HcFpAnim a) {
+static float last_frame(const HcFpModel* w, HcFpAnim a) {
     return (float)(w->anim_frames[a] > 0 ? w->anim_frames[a] - 1 : 0);
 }
 
-static int done(const HcFpWeapon* w, const Track* t) {
+static int done(const HcFpModel* w, const Track* t) {
     return !t->loop && t->frame >= last_frame(w, t->anim);
 }
 
-static void play(const HcFpWeapon* w, HcFpAnim a, float rate, int loop, float fade) {
+static void play(const HcFpModel* w, HcFpAnim a, float rate, int loop, float fade) {
     if (!has(w, a)) return;
     s.prev = s.cur;
     s.cur.anim = a;
@@ -122,12 +122,12 @@ static void play(const HcFpWeapon* w, HcFpAnim a, float rate, int loop, float fa
 }
 
 /* Rate that stretches an animation over `seconds`. */
-static float rate_for(const HcFpWeapon* w, HcFpAnim a, float seconds) {
+static float rate_for(const HcFpModel* w, HcFpAnim a, float seconds) {
     if (seconds <= 0.0f || !has(w, a)) return 1.0f;
     return last_frame(w, a) / (seconds * HC_FP_FPS);
 }
 
-static void choose(const HcFpWeapon* w, const HaloUnit* p, float dt) {
+static void choose(const HcFpModel* w, const HaloUnit* p, float dt) {
     const HaloWeaponState* ws = &p->weapon;
     const HaloWeaponDef* wd = &g_halo_weapons[ws->id];
     int fired = s.fired, charged = s.fired_charged;
@@ -206,7 +206,7 @@ static void choose(const HcFpWeapon* w, const HaloUnit* p, float dt) {
 void hc_fp_view_update(const HaloUnit* p, float dt) {
     s.posed = 0;
     if (p == NULL || p->dead) return;
-    const HcFpWeapon* w = weapon_for(p->weapon.id);
+    const HcFpModel* w = weapon_for(p->weapon.id);
     if (w == NULL) {
         s.weapon = -1;
         return;
@@ -245,7 +245,7 @@ void hc_fp_view_update(const HaloUnit* p, float dt) {
 }
 
 int hc_fp_view_muzzle(const HaloUnit* p, float out[3]) {
-    const HcFpWeapon* w = p ? weapon_for(p->weapon.id) : NULL;
+    const HcFpModel* w = p ? weapon_for(p->weapon.id) : NULL;
     if (w == NULL || !s.posed || (int)p->weapon.id != s.weapon || w->muzzle_node < 0) return 0;
     hc_fp_mtx_point(s.world[w->muzzle_node], w->muzzle, out);
     return 1;
@@ -253,9 +253,9 @@ int hc_fp_view_muzzle(const HaloUnit* p, float out[3]) {
 
 /* ---- drawing --------------------------------------------------------------- */
 
-static const HcFpWeapon* drawable(const HcView* v, const HaloUnit* p) {
+static const HcFpModel* drawable(const HcView* v, const HaloUnit* p) {
     if (p == NULL || p->dead || v->zoom > 1.01f || !s.posed) return NULL;
-    const HcFpWeapon* w = weapon_for(p->weapon.id);
+    const HcFpModel* w = weapon_for(p->weapon.id);
     return (w && (int)p->weapon.id == s.weapon && w->vertex_count <= MAX_VERTICES) ? w : NULL;
 }
 
@@ -296,7 +296,7 @@ static Gfx* set_texture(Gfx* g, int index) {
 
 /* Skin every vertex once per frame and light it with a key light over the
  * left shoulder. */
-static void skin_all(const HcFpWeapon* w, const HcView* v) {
+static void skin_all(const HcFpModel* w, const HcView* v) {
     static const float light[3] = { 0.28f, 0.46f, 0.84f };
     float bob_l = sinf(v->bob_phase) * 0.006f * v->bob_amount;
     float bob_u = -fabsf(cosf(v->bob_phase)) * 0.005f * v->bob_amount;
@@ -311,7 +311,7 @@ static void skin_all(const HcFpWeapon* w, const HcView* v) {
     }
 }
 
-static Gfx* draw_batch(Gfx* g, GRAPH* graph, const Gfx* opa_head, const HcFpWeapon* w, const HcFpBatch* b) {
+static Gfx* draw_batch(Gfx* g, GRAPH* graph, const Gfx* opa_head, const HcFpModel* w, const HcFpBatch* b) {
     Vtx* vb = alloc_vtx(graph, opa_head, b->vertex_count);
     if (vb == NULL) return g;
     const uint16_t* idx = hc_fp_batch_indices(w, b);
@@ -346,7 +346,7 @@ static Gfx* draw_batch(Gfx* g, GRAPH* graph, const Gfx* opa_head, const HcFpWeap
 }
 
 Gfx* hc_fp_view_draw_opa(Gfx* g, GRAPH* graph, const HcView* v, const HaloUnit* p) {
-    const HcFpWeapon* w = drawable(v, p);
+    const HcFpModel* w = drawable(v, p);
     if (w == NULL) return g;
     skin_all(w, v);
     Gfx* start = g;
@@ -384,7 +384,7 @@ Gfx* hc_fp_view_draw_opa(Gfx* g, GRAPH* graph, const HcView* v, const HaloUnit* 
 }
 
 Gfx* hc_fp_view_draw_xlu(Gfx* g, GRAPH* graph, const HcView* v, const HaloUnit* p) {
-    const HcFpWeapon* w = drawable(v, p);
+    const HcFpModel* w = drawable(v, p);
     if (w == NULL) return g;
     int any = 0;
     for (int i = 0; i < w->batch_count && !any; i++) any = (w->batches[i].flags & HC_FP_BATCH_TRANSLUCENT) != 0;
