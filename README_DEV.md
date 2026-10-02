@@ -65,6 +65,8 @@ Environment switches:
 | `HC_EVENT_LOG=<path>` | Append combat events to a text file |
 | `HC_ATTRACT=1` | Self-playing tour: cycles every weapon every 3 s, aims at the nearest visible target, keeps a Covenant in view, invincible. Only runs while the mouse isn't captured. |
 | `HC_VILLAGER_ALL=1` | Treat scripted NPCs (Rover, Porter, shopkeepers) as shootable villagers too |
+| `HC_SHOP_HOURS=1` | Keep Nook's real opening hours (by default his shop never closes) |
+| `HC_WARP=shop` | Three seconds into the town, walk the Chief through Nook's shop door (unattended checks) |
 
 Saves live in `build/host/bin/save/card_a/DobutsunomoriP_MURA.gci`, the same
 format as Dolphin's Memcard Manager "Export GCI". To skip the new-game intro,
@@ -74,7 +76,8 @@ you save.
 
 The title-screen demo runs in your town, so `HC_FIRST_PERSON=1 HC_NO_CAPTURE=1
 HC_ATTRACT=1 HC_VILLAGER_ALL=1` exercises the whole sandbox without touching a
-save file.
+save file; add `HC_WARP=shop` to take the tour into Nook's shop. The tour taps
+A through any dialogue. `SDL_AUDIODRIVER=dummy` keeps a test instance silent.
 
 ## Controls
 
@@ -111,6 +114,13 @@ Villagers are shootable. They shout when hit, run from gunfire, explosions
 and nearby Covenant, and get knocked down when their health runs out, then
 get back up 20 seconds later. Scripted NPCs (Rover, Porter, shop staff) flinch
 and complain but can't be knocked down unless `HC_VILLAGER_ALL=1`.
+
+Tom Nook is the exception: in any of his shops he takes about 150 damage
+(roughly twenty AR rounds, or one rocket), runs from gunfire like a villager,
+and when he goes down he stays down, in a shower of bells, until you leave.
+His shop ignores its opening hours, so he is always in. Doors work from the
+Halo camera: walk into one and AC plays the door animation, then hands
+control back.
 
 When a message window opens (talking to a villager), control and the camera
 go back to Animal Crossing until it closes.
