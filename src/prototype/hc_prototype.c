@@ -65,6 +65,7 @@ typedef struct HcState {
     int attract;           /* HC_ATTRACT=1: plays itself (weapon tour) when the mouse isn't captured */
     int invincible;        /* F8; on unless HC_INVINCIBLE=0. Outlives the per-scene sim reset. */
     int attract_weapon;
+    int attract_threw;
     int attract_frame;
 } HcState;
 
@@ -204,8 +205,13 @@ static void attract(HaloUnit* p) {
     g.attract_frame++;
     if (w != g.attract_weapon) {
         g.attract_weapon = w;
-        p->control.weapon_select = w + 1;
-        if (w == 0) p->control.grenade_pressed = 1;
+        g.attract_threw = 0;
+    }
+    /* The arsenal refuses to switch mid-throw, so keep asking. */
+    if ((int)p->weapon.id != w) p->control.weapon_select = w + 1;
+    if (w == 0 && phase > 1.5f && !g.attract_threw) {
+        g.attract_threw = 1;
+        p->control.grenade_pressed = 1;
     }
     const HaloWorldApi* world = g.sim.world;
     hv3 eye = halo_unit_eye(p);
