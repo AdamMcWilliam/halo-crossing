@@ -25,6 +25,8 @@ void hc_hook_draw_hud(struct game_play_s* play);
 int hc_hook_sdl_event(const union SDL_Event* e);
 /* Last chance to edit pad 0 before the game sees it. */
 void hc_hook_filter_pad(struct PADStatus* status);
+/* Nonzero: Nook's shops ignore their opening hours. */
+int hc_hook_shops_never_close(void);
 
 #ifdef __cplusplus
 }

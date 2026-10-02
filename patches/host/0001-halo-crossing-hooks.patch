@@ -150,3 +150,31 @@ index d59ac1e..572d575 100644
  
      game->doing_point = 0;
      game->doing_point_specific = 0xB4;
+diff --git a/src/game/m_shop.c b/src/game/m_shop.c
+index a40a132..9a7539c 100644
+--- a/src/game/m_shop.c
++++ b/src/game/m_shop.c
+@@ -16,6 +16,10 @@
+ #include "pc_settings.h"
+ #endif
+ 
++#ifdef HALO_CROSSING
++#include "hc_hooks.h"
++#endif
++
+ extern mActor_name_t* mSP_ftr_list[];
+ extern mActor_name_t* mSP_binsen_list[];
+ extern mActor_name_t* mSP_cloth_list[];
+@@ -1764,6 +1768,12 @@ extern int mSP_ShopOpen() {
+         return mSP_SHOP_STATUS_OPEN; // shop is forcefully open during chores
+     }
+ 
++#ifdef HALO_CROSSING
++    if (hc_hook_shops_never_close() && mSP_InRenewal() == FALSE) {
++        return mSP_SHOP_STATUS_OPEN;
++    }
++#endif
++
+     if (mEv_CheckEvent(mEv_SPNPC_SHOP) == TRUE) {
+         lbRTC_time_c bargin_time = Save_Get(event_save_data).special.event.bargin.start_time;
+ 

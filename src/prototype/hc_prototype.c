@@ -20,10 +20,15 @@
 #include "hc_invasion.h"
 #include "hc_villagers.h"
 #include "hc_world_scale.h"
+#include "m_common_data.h"
+#include "m_field_info.h"
 #include "m_msg.h"
+#include "m_name_table.h"
 #include "m_play.h"
 #include "m_player.h"
 #include "m_player_lib.h"
+#include "m_random_field_h.h"
+#include "m_scene.h"
 #include "m_scene_table.h"
 #include "m_view.h"
 
@@ -68,6 +73,12 @@ typedef struct HcState {
     int attract_weapon;
     int attract_threw;
     int attract_frame;
+    int shops_never_close; /* on unless HC_SHOP_HOURS=1 */
+    int warp_shop;         /* HC_WARP=shop: walk into Nook's shop once the town is up (unattended checks) */
+    int warp_phase;        /* 0 waiting, 1 loading the shop's block, 2 walking to the door, 3 done */
+    float warp_timer;
+    int warp_door;
+    float scene_time;
 } HcState;
 
 static HcState g;
@@ -133,6 +144,10 @@ static void log_event(const HaloEvent* e) {
                    g.sim.units[e->unit].shield, g.sim.units[e->unit].body);
             break;
         case HALO_EV_UNIT_KILLED:
+            if (hc_villagers_is_nook(e->unit)) {
+                hc_log("tom nook killed by %s", unit_name(e->other));
+                break;
+            }
             if (e->unit >= 0 && g.sim.units[e->unit].biped == HALO_BIPED_VILLAGER) {
                 hc_log("villager knocked out by %s", unit_name(e->other));
                 break;
@@ -194,6 +209,10 @@ static void hc_init_once(void) {
     hc_villagers_set_treat_all(va && va[0] == '1');
     const char* gm = getenv("HC_INVINCIBLE");
     g.invincible = !(gm && gm[0] == '0');
+    const char* sh = getenv("HC_SHOP_HOURS");
+    g.shops_never_close = !(sh && sh[0] == '1');
+    const char* wp = getenv("HC_WARP");
+    g.warp_shop = wp && strcmp(wp, "shop") == 0;
     hc_fp_view_init();
 }
 
@@ -288,6 +307,25 @@ static int dialogue_open(void) {
     return w != NULL && !mMsg_Check_MainHide(w);
 }
 
+/* Walking through a door, arriving through one, cutscenes: AC animates the
+ * player itself and the Halo layer hands control over until it's done. */
+static int ac_owns_player(const PLAYER_ACTOR* pl) {
+    switch (pl->now_main_index) {
+        case mPlayer_INDEX_DMA:
+        case mPlayer_INDEX_INTRO:
+        case mPlayer_INDEX_RETURN_DEMO:
+        case mPlayer_INDEX_RETURN_OUTDOOR:
+        case mPlayer_INDEX_RETURN_OUTDOOR2:
+        case mPlayer_INDEX_DOOR:
+        case mPlayer_INDEX_OUTDOOR:
+        case mPlayer_INDEX_INVADE:
+        case mPlayer_INDEX_KNOCK_DOOR:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static hv3 ground_at(hv3 p) {
     const HaloWorldApi* w = hc_ac_world_api();
     float z;
@@ -336,11 +374,133 @@ static void sync_ac_from_halo(PLAYER_ACTOR* pl, const HaloUnit* p) {
     ACTOR* a = &pl->actor_class;
     xyz_t ap = hc_h2a_pos(halo_unit_pos_interp(p, g.sim.alpha));
     a->world.position = ap;
-    a->speed = 0.0f;
     a->position_speed.x = a->position_speed.y = a->position_speed.z = 0.0f;
     s16 yaw = hc_h2a_yaw(p->yaw);
     a->shape_info.rotation.y = yaw;
-    a->world.angle.y = yaw;
+    /* Shop doors only open for a player pushing toward them, and a Chief
+     * pressed against the door has no velocity left; go by the stick. */
+    float tf = p->control.throttle_forward, tl = p->control.throttle_left;
+    float push = sqrtf(tf * tf + tl * tl);
+    float speed = hv3_len_xy(p->vel);
+    a->speed = push > 0.2f ? hc_clampf(hc_h2a_len(speed) / 30.0f, 1.0f, 7.5f) : 0.0f;
+    a->world.angle.y = a->speed > 0.0f ? hc_h2a_yaw(p->control.aim_yaw + atan2f(tl, tf)) : yaw;
+}
+
+/* ---- HC_WARP=shop ---------------------------------------------------------- */
+
+typedef struct HcShopDoor {
+    s16 profile;
+    float dx, dz;       /* the door point each building's check_player measures from */
+    Door_data_c enter;
+} HcShopDoor;
+
+static const HcShopDoor k_shop_doors[] = {
+    { mAc_PROFILE_SHOP, -38.0f, 42.0f, { SCENE_SHOP0, mSc_DIRECT_NORTH, FALSE, 0, { 160, 0, 300 }, EMPTY_NO, 1, { 0 } } },
+    { mAc_PROFILE_CONVENI, -14.0f, 76.0f, { SCENE_CONVENI, mSc_DIRECT_NORTH, FALSE, 0, { 320, 0, 300 }, EMPTY_NO, 1, { 0 } } },
+    { mAc_PROFILE_SUPER, -38.0f, 96.0f, { SCENE_SUPER, mSc_DIRECT_NORTH, FALSE, 0, { 320, 0, 460 }, EMPTY_NO, 1, { 0 } } },
+    { mAc_PROFILE_DEPART, -38.0f, 96.0f, { SCENE_DEPART, mSc_DIRECT_NORTH, FALSE, 0, { 320, 0, 540 }, EMPTY_NO, 1, { 0 } } },
+};
+#define HC_SHOP_DOOR_FACING 0x6000 /* AC yaw 135 degrees: the doors face south-west */
+
+static void teleport(HaloUnit* p, xyz_t at, s16 ac_yaw) {
+    hv3 h = hc_a2h_pos(at);
+    h.z = 30.0f;
+    p->pos = p->prev_pos = ground_at(h);
+    p->vel = hv3_make(0, 0, 0);
+    p->control.aim_yaw = p->yaw = p->prev_yaw = hc_a2h_yaw(ac_yaw);
+    p->control.aim_pitch = 0.0f;
+}
+
+static ACTOR* find_shop_building(GAME_PLAY* play, int* door) {
+    for (ACTOR* a = play->actor_info.list[ACTOR_PART_ITEM].actor; a != NULL; a = a->next_actor) {
+        for (int k = 0; k < (int)(sizeof(k_shop_doors) / sizeof(k_shop_doors[0])); k++) {
+            if (a->id != k_shop_doors[k].profile) continue;
+            *door = k;
+            return a;
+        }
+    }
+    return NULL;
+}
+
+/* Puts the Chief in front of the shop, waits for its block to load, then
+ * walks him at the door from the south-west so unattended runs go through
+ * the real door code. Warps straight in if that fails. */
+static int warp_to_shop(GAME_PLAY* play, HaloUnit* p, float dt) {
+    p->control.throttle_forward = p->control.throttle_left = 0.0f;
+    if (g.warp_phase == 0) {
+        if (!town_scene(play) || g.scene_time < 3.0f) return 0;
+        /* The block kind table isn't filled in for the title demo; look for
+         * the building itself in every block's field items. */
+        int bx = -1, bz = -1, ux = 8, uz = 8;
+        for (int z = 0; z < BLOCK_Z_NUM && bx < 0; z++) {
+            for (int x = 0; x < BLOCK_X_NUM && bx < 0; x++) {
+                for (int k = 0; k < 4; k++) {
+                    if (mFI_SearchFGInBlock(&ux, &uz, (mActor_name_t)(SHOP0 + k), x, z)) {
+                        bx = x;
+                        bz = z;
+                        break;
+                    }
+                }
+            }
+        }
+        if (bx < 0 && !mFI_BlockKind2BkNum(&bx, &bz, mRF_BLOCKKIND_SHOP)) {
+            g.warp_phase = 3;
+            hc_log("warp: no shop in this town");
+            return 0;
+        }
+        xyz_t at;
+        mFI_BkandUtNum2CenterWpos(&at, bx, bz, ux, uz);
+        at.z += 120.0f;
+        teleport(p, at, HC_SHOP_DOOR_FACING);
+        g.warp_phase = 1;
+        g.warp_timer = 0.0f;
+        hc_log("warp: shop block %d,%d unit %d,%d", bx, bz, ux, uz);
+        return 1;
+    }
+    if (g.warp_phase == 1) {
+        g.warp_timer += dt;
+        ACTOR* shop = find_shop_building(play, &g.warp_door);
+        if (shop) {
+            xyz_t at = shop->world.position;
+            at.x += k_shop_doors[g.warp_door].dx - 30.0f;
+            at.z += k_shop_doors[g.warp_door].dz + 30.0f;
+            teleport(p, at, HC_SHOP_DOOR_FACING);
+            g.warp_phase = 2;
+            g.warp_timer = 0.0f;
+            hc_log("warp: walking into the shop door");
+        } else if (g.warp_timer > 4.0f) {
+            g.warp_phase = 3;
+            hc_log("warp: the shop building never loaded");
+        }
+        return 1;
+    }
+    if (g.warp_phase != 2) return 0;
+    g.warp_timer += dt;
+    p->control.throttle_forward = 1.0f;
+    p->control.aim_yaw = hc_a2h_yaw(HC_SHOP_DOOR_FACING);
+    if (g.warp_timer > 6.0f) {
+        g.warp_phase = 3;
+        Door_data_c* out = Common_GetPointer(structure_exit_door_data);
+        xyz_t ap = hc_h2a_pos(p->pos);
+        out->next_scene_id = Save_Get(scene_no);
+        out->exit_orientation = mSc_DIRECT_SOUTH_WEST;
+        out->exit_type = 0;
+        out->extra_data = 3;
+        out->exit_position.x = (s16)ap.x;
+        out->exit_position.y = (s16)ap.y;
+        out->exit_position.z = (s16)ap.z;
+        out->door_actor_name = EMPTY_NO;
+        out->wipe_type = WIPE_TYPE_FADE_BLACK;
+        Door_data_c enter = k_shop_doors[g.warp_door].enter;
+        int ok = goto_other_scene(play, &enter, FALSE);
+        hc_log("warp: the door never opened, warping (%d)", ok);
+    }
+    return 1;
+}
+
+int hc_hook_shops_never_close(void) {
+    hc_init_once();
+    return g.shops_never_close;
 }
 
 static void handle_fkeys(GAME_PLAY* play) {
@@ -436,7 +596,6 @@ static void build_overlay(GAME_PLAY* play, PLAYER_ACTOR* pl) {
 }
 
 void hc_hook_play_init(GAME_PLAY* play) {
-    (void)play;
     hc_init_once();
     halo_sim_init(&g.sim, hc_ac_world_api(), (unsigned int)SDL_GetTicks() | 1u);
     g.sim.arsenal_enabled = 1;
@@ -447,6 +606,11 @@ void hc_hook_play_init(GAME_PLAY* play) {
     g.invasion_pending = g.invasion_enabled;
     g.zoom_level = 0;
     g.active = 0;
+    g.scene_time = 0.0f;
+    if (g.warp_phase == 1 || g.warp_phase == 2) {
+        g.warp_phase = 3;
+        hc_log("warp: through the door into scene %d", play->scene_id);
+    }
 }
 
 void hc_hook_play_cleanup(GAME_PLAY* play) {
@@ -462,6 +626,7 @@ void hc_hook_play_update(GAME_PLAY* play) {
     float dt = (float)play->game.graph->dt;
     if (!(dt > 0.0f) || dt > 0.25f) dt = 1.0f / 60.0f;
     g.time += dt;
+    g.scene_time += dt;
     g.fps += (1.0f / dt - g.fps) * 0.05f;
     g.view.time = g.time;
 
@@ -474,7 +639,7 @@ void hc_hook_play_update(GAME_PLAY* play) {
     }
 
     handle_fkeys(play);
-    g.fps_live = g.first_person && !dialogue_open() && !g_pc_paused;
+    g.fps_live = g.first_person && !dialogue_open() && !g_pc_paused && !ac_owns_player(pl);
     hc_input_set_capture(&g.input, g.fps_live && !g.no_capture && SDL_GetKeyboardFocus() != NULL);
 
     HaloUnit* p = ensure_player(pl);
@@ -483,7 +648,8 @@ void hc_hook_play_update(GAME_PLAY* play) {
     g.sim.infinite_shields = g.invincible || touring;
     if (g.fps_live && !p->dead) {
         hc_input_apply(&g.input, &p->control);
-        if (touring) attract(p);
+        int warping = g.warp_shop && warp_to_shop(play, p, dt);
+        if (touring && !warping) attract(p);
     } else if (!g.fps_live) {
         sync_halo_from_ac(pl, p);
     }
@@ -514,6 +680,12 @@ void hc_hook_play_update(GAME_PLAY* play) {
     }
     halo_sim_clear_events(&g.sim);
     hc_villagers_post(play, &g.sim, dt);
+    xyz_t nook_at;
+    if (hc_villagers_take_nook_kill(&nook_at)) {
+        g.kills++;
+        hc_fx_bells(nook_at);
+        hc_message(hc_villagers_nook_kills() > 1 ? "TOM NOOK KILLED. AGAIN." : "TOM NOOK KILLED");
+    }
     for (int i = 0; i < HC_LOG_LINES; i++) g.log_age[i] += dt;
     hc_fx_update(dt);
     hc_fp_view_update(p, dt);
@@ -602,7 +774,14 @@ int hc_hook_sdl_event(const union SDL_Event* e) {
 }
 
 void hc_hook_filter_pad(struct PADStatus* status) {
-    if (!g.fps_live || status == NULL) return;
+    if (status == NULL) return;
+    if (g.attract && !g.input.capture && g.active && dialogue_open()) {
+        /* The tour can't read; tap A through whatever it's being told. */
+        static unsigned frame;
+        status->button = (++frame % 16) < 4 ? PAD_BUTTON_A : 0;
+        return;
+    }
+    if (!g.fps_live) return;
     status->button = 0;
     status->stickX = status->stickY = 0;
     status->substickX = status->substickY = 0;
