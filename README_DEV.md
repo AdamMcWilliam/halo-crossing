@@ -41,9 +41,10 @@ Environment switches:
 | `HC_FIRST_PERSON=1` | Start in the Halo camera |
 | `HC_AUTOSPAWN=1` | Spawn a Grunt the first time the Halo camera goes live |
 | `HC_INVASION=0` | Don't populate the town with Covenant squads on entry |
+| `HC_INVINCIBLE=0` | Start mortal (the Chief is invincible by default; F8 toggles) |
 | `HC_NO_CAPTURE=1` | Never capture the mouse (for unattended runs) |
 | `HC_EVENT_LOG=<path>` | Append combat events to a text file |
-| `HC_ATTRACT=1` | Self-playing tour: cycles every weapon every 3 s, aims at the nearest visible target, keeps a Covenant in view, infinite shields. Only runs while the mouse isn't captured. |
+| `HC_ATTRACT=1` | Self-playing tour: cycles every weapon every 3 s, aims at the nearest visible target, keeps a Covenant in view, invincible. Only runs while the mouse isn't captured. |
 | `HC_VILLAGER_ALL=1` | Treat scripted NPCs (Rover, Porter, shopkeepers) as shootable villagers too |
 
 Saves live in `build/host/bin/save/card_a/DobutsunomoriP_MURA.gci`, the same
@@ -105,7 +106,7 @@ go back to Animal Crossing until it closes.
 | F4 | AI nav paths |
 | F5 / F6 | Spawn a Grunt / an Elite ahead of you |
 | F7 | Full arsenal: refill every weapon and both grenade types |
-| F8 | Infinite shields |
+| F8 | Invincible on/off (starts on; stays set across rooms) |
 | F9 | Kill all Covenant |
 | F10 | Toggle the debug overlay |
 | F11 | Clear and repopulate the town's Covenant squads |

@@ -63,6 +63,7 @@ typedef struct HcState {
     int invasion_enabled;  /* HC_INVASION=0 turns the town invasion off */
     int invasion_pending;  /* populate once the Halo camera goes live in town */
     int attract;           /* HC_ATTRACT=1: plays itself (weapon tour) when the mouse isn't captured */
+    int invincible;        /* F8; on unless HC_INVINCIBLE=0. Outlives the per-scene sim reset. */
     int attract_weapon;
     int attract_frame;
 } HcState;
@@ -189,6 +190,8 @@ static void hc_init_once(void) {
     g.attract = at && at[0] == '1';
     const char* va = getenv("HC_VILLAGER_ALL");
     hc_villagers_set_treat_all(va && va[0] == '1');
+    const char* gm = getenv("HC_INVINCIBLE");
+    g.invincible = !(gm && gm[0] == '0');
 }
 
 /* Attract mode: a 3 s slot per weapon, aiming at the nearest living
@@ -361,8 +364,8 @@ static void handle_fkeys(GAME_PLAY* play) {
         }
     }
     if (hc_input_take_fkey(in, 8)) {
-        g.sim.infinite_shields = !g.sim.infinite_shields;
-        hc_message(g.sim.infinite_shields ? "INFINITE SHIELDS ON" : "INFINITE SHIELDS OFF");
+        g.invincible = !g.invincible;
+        hc_message(g.invincible ? "INVINCIBLE ON" : "INVINCIBLE OFF");
     }
     if (hc_input_take_fkey(in, 9)) {
         int n = 0;
@@ -403,7 +406,7 @@ static void build_overlay(GAME_PLAY* play, PLAYER_ACTOR* pl) {
         snprintf(t->lines[t->count++], sizeof(t->lines[0]), "%s %d/%d  sh %.0f  hp %.0f  frag %d plasma %d%s", wn,
                  p->weapon.rounds_loaded, p->weapon.rounds_reserve, p->shield, p->body,
                  p->grenades[HALO_GRENADE_FRAG], p->grenades[HALO_GRENADE_PLASMA],
-                 g.sim.infinite_shields ? "  [INF SH]" : "");
+                 g.sim.infinite_shields ? "  [INVINCIBLE]" : "");
     }
     int by_state[HALO_AI_STATE_COUNT] = { 0 };
     int n = 0;
@@ -467,12 +470,11 @@ void hc_hook_play_update(GAME_PLAY* play) {
 
     HaloUnit* p = ensure_player(pl);
     if (p == NULL) return;
+    int touring = g.attract && !g.input.capture;
+    g.sim.infinite_shields = g.invincible || touring;
     if (g.fps_live && !p->dead) {
         hc_input_apply(&g.input, &p->control);
-        if (g.attract && !g.input.capture) {
-            g.sim.infinite_shields = 1;
-            attract(p);
-        }
+        if (touring) attract(p);
     } else if (!g.fps_live) {
         sync_halo_from_ac(pl, p);
     }
