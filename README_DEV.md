@@ -46,6 +46,12 @@ Environment switches:
 | `HC_ATTRACT=1` | Self-playing tour: cycles every weapon every 3 s, aims at the nearest visible target, keeps a Covenant in view, infinite shields. Only runs while the mouse isn't captured. |
 | `HC_VILLAGER_ALL=1` | Treat scripted NPCs (Rover, Porter, shopkeepers) as shootable villagers too |
 
+Saves live in `build/host/bin/save/card_a/DobutsunomoriP_MURA.gci`, the same
+format as Dolphin's Memcard Manager "Export GCI". To skip the new-game intro,
+drop an existing USA (`GAFE`) town save there. Keep an untouched copy in
+`assets_local/saves/`, because the game overwrites the installed file when
+you save.
+
 The title-screen demo runs in your town, so `HC_FIRST_PERSON=1 HC_NO_CAPTURE=1
 HC_ATTRACT=1 HC_VILLAGER_ALL=1` exercises the whole sandbox without touching a
 save file.
