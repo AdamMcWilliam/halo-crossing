@@ -13,6 +13,7 @@
 #include "graph.h"
 #include "halo/halo_sim.h"
 #include "hc_ac_world.h"
+#include "hc_audio.h"
 #include "hc_draw.h"
 #include "hc_biped_view.h"
 #include "hc_fp_view.h"
@@ -217,6 +218,7 @@ static void hc_init_once(void) {
     g.warp_shop = wp && strcmp(wp, "shop") == 0;
     hc_fp_view_init();
     hc_biped_view_init();
+    hc_audio_init();
 }
 
 /* Attract mode: a 3 s slot per weapon, aiming at the nearest living
@@ -592,10 +594,11 @@ static void build_overlay(GAME_PLAY* play, PLAYER_ACTOR* pl) {
              by_state[HALO_AI_SEARCH], by_state[HALO_AI_FLEE], g.kills, hc_villagers_summary());
     HcBipedStats* bs = hc_biped_view_stats();
     snprintf(t->lines[t->count++], sizeof(t->lines[0]),
-             "gfx %d/%d/%d ovf %d  rays %d lc %d path %d  vm %s  cov %d/%d v%d%s", gs->opa_used, gs->xlu_used,
-             gs->font_used, gs->overflows, ws->rays, ws->line_checks, ws->paths,
+             "gfx %d/%d/%d ovf %d  rays %d lc %d path %d  vm %s  cov %d/%d v%d%s  snd %d/%u/%u", gs->opa_used,
+             gs->xlu_used, gs->font_used, gs->overflows, ws->rays, ws->line_checks, ws->paths,
              p && hc_fp_view_available(p->weapon.id) ? "halo" : "boxes", bs->drawn, bs->culled, bs->vertices,
-             bs->out_of_vertices ? " FULL" : "");
+             bs->out_of_vertices ? " FULL" : "", hc_audio_stats()->voices, hc_audio_stats()->played,
+             hc_audio_stats()->lines);
     for (int i = 0; i < HC_LOG_LINES && t->count < HC_DEBUG_LINES; i++) {
         if (g.log[i][0] && g.log_age[i] < HC_LOG_LIFE) snprintf(t->lines[t->count++], sizeof(t->lines[0]), "> %s", g.log[i]);
     }
@@ -609,6 +612,7 @@ void hc_hook_play_init(GAME_PLAY* play) {
     hc_ac_world_invalidate();
     hc_fx_clear();
     hc_villagers_reset();
+    hc_audio_reset();
     g.invasion_pending = g.invasion_enabled;
     g.zoom_level = 0;
     g.active = 0;
@@ -692,6 +696,7 @@ void hc_hook_play_update(GAME_PLAY* play) {
         hc_fx_from_event(&g.sim, &g.sim.events[i]);
         hc_fp_view_event(&g.sim, &g.sim.events[i]);
         hc_biped_view_event(&g.sim, &g.sim.events[i]);
+        hc_audio_event(&g.sim, &g.sim.events[i]);
         hc_villagers_event(&g.sim, &g.sim.events[i]);
         log_event(&g.sim.events[i]);
     }
@@ -707,6 +712,7 @@ void hc_hook_play_update(GAME_PLAY* play) {
     hc_fx_update(dt);
     hc_fp_view_update(p, dt);
     hc_biped_view_update(&g.sim, dt);
+    hc_audio_update(&g.sim, dt, g_pc_paused);
     update_zoom(p);
     g.view.weapon_switch_age += dt;
     g.hud.label_count = 0;
