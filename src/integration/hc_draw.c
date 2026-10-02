@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "graph.h"
+#include "hc_biped_view.h"
 #include "hc_fp_view.h"
 #include "hc_gfx.h"
 #include "hc_models.h"
@@ -447,7 +448,10 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
     OPEN_DISP(graph);
 
     Gfx* opa = NOW_POLY_OPA_DISP;
+    Gfx* xlu = NOW_POLY_XLU_DISP;
     opa = hc_gfx_mode_opa(opa);
+    xlu = hc_gfx_mode_xlu(xlu);
+    hc_biped_view_begin_frame();
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         const HaloUnit* u = &sim->units[i];
         /* The AC villager stands in for the Chief in AC camera mode; kinematic
@@ -456,15 +460,13 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
         xyz_t ap = hc_h2a_pos(u->pos);
         float dx = ap.x - v->eye.x, dz = ap.z - v->eye.z;
         if (dx * dx + dz * dz > DRAW_RANGE_AC * DRAW_RANGE_AC) continue;
-        opa = draw_unit(opa, graph, sim, i);
+        if (!hc_biped_view_draw(&opa, &xlu, graph, play, sim, i, v)) opa = draw_unit(opa, graph, sim, i);
     }
     if (v->show_nav) opa = draw_debug_paths(opa, graph, sim);
     HaloUnit* p = halo_player(sim);
     if (v->first_person && p && !p->dead && p->weapon.id != HALO_WEAPON_NONE) opa = draw_viewmodel(opa, graph, sim, v, p);
     SET_POLY_OPA_DISP(opa);
 
-    Gfx* xlu = NOW_POLY_XLU_DISP;
-    xlu = hc_gfx_mode_xlu(xlu);
     xlu = draw_projectiles(xlu, graph, play, sim, v);
     xlu = draw_fx(xlu, graph, play, v);
     if (v->first_person && p && !p->dead && hc_fp_view_available(p->weapon.id))
@@ -472,6 +474,7 @@ void hc_draw_world(GAME_PLAY* play, HaloSim* sim, const HcView* v) {
     for (int i = 0; i < HALO_MAX_UNITS; i++) {
         const HaloUnit* u = &sim->units[i];
         if (!u->active || u->dead || u->is_player || u->kinematic || u->shield_flash <= 0.0f) continue;
+        if (hc_biped_view_available(u)) continue;
         unit_matrix(sim, i);
         xlu = draw_model_boxes(xlu, graph, sim, i, 1, u->shield_flash * 0.55f);
     }
