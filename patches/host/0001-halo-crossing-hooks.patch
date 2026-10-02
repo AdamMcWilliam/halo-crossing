@@ -76,6 +76,39 @@ index f0ff835..2f8e12a 100644
      return PAD_CHAN0_BIT; /* Controller 1 connected */
  }
  
+diff --git a/src/game/m_msg.c b/src/game/m_msg.c
+index 85ed2af..99eeabf 100644
+--- a/src/game/m_msg.c
++++ b/src/game/m_msg.c
+@@ -12,6 +12,9 @@
+ #ifdef TARGET_PC
+ #include "pc_bswap.h"
+ #endif
++#ifdef HALO_CROSSING
++#include "hc_hooks.h"
++#endif
+ 
+ static u32 Msg_table_rom_start = 0;
+ static u32 Msg_rom_start = 0;
+diff --git a/src/game/m_msg_appear.c_inc b/src/game/m_msg_appear.c_inc
+index 669fb86..bb8937b 100644
+--- a/src/game/m_msg_appear.c_inc
++++ b/src/game/m_msg_appear.c_inc
+@@ -35,6 +35,14 @@ static void mMsg_MainSetup_Appear(mMsg_Window_c* msg_p, GAME* game) {
+         ACTOR* actor = appear_data->speaker_actor;
+         int show_name = appear_data->name_shown_flag;
+ 
++#ifdef HALO_CROSSING
++        {
++            int len = hc_hook_message(actor, msg_no, msg_p->msg_data->text_buf.data, mMsg_MSG_BUF_SIZE);
++            if (len > 0) {
++                msg_p->msg_data->msg_len = len;
++            }
++        }
++#endif
+         mMsg_Set_client_actor_p(msg_p, actor, show_name);
+         msg_p->window_background_color = appear_data->window_color;
+         mMsg_sound_spec_change_voice(msg_p);
 diff --git a/src/game/m_play.c b/src/game/m_play.c
 index d59ac1e..572d575 100644
 --- a/src/game/m_play.c

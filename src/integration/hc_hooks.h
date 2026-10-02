@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 struct game_play_s;
+struct actor_s;
 struct PADStatus;
 union SDL_Event;
 
@@ -27,6 +28,9 @@ int hc_hook_sdl_event(const union SDL_Event* e);
 void hc_hook_filter_pad(struct PADStatus* status);
 /* Nonzero: Nook's shops ignore their opening hours. */
 int hc_hook_shops_never_close(void);
+/* A message window just loaded message msg_no for speaker (may be NULL) into
+ * text (cap bytes). Returns the new length to replace it, or 0 to keep it. */
+int hc_hook_message(struct actor_s* speaker, int msg_no, unsigned char* text, int cap);
 
 #ifdef __cplusplus
 }

@@ -44,6 +44,7 @@ extern int g_pc_paused;
 #define HC_LOG_LINES 3
 #define HC_LOG_LIFE 6.0f
 #define HC_AI_WAKE_RANGE 20.0f   /* wu: idle squads farther than this sleep */
+#define HC_DEBT_BELLS 4980000u   /* six top-floor mortgages */
 #define HC_INVASION_CLEARANCE 10.0f /* wu kept free of Covenant around the player */
 
 typedef struct HcState {
@@ -74,16 +75,23 @@ typedef struct HcState {
     int invasion_pending;  /* populate once the Halo camera goes live in town */
     int attract;           /* HC_ATTRACT=1: plays itself (weapon tour) when the mouse isn't captured */
     int attract_only;      /* HC_ATTRACT_WEAPON=1..10: tour just that weapon (HaloWeaponId + 1), else 0 */
+    int auto_talk;         /* HC_AUTO_TALK=1: tap A through dialogue without the tour */
     int invincible;        /* F8; on unless HC_INVINCIBLE=0. Outlives the per-scene sim reset. */
     int attract_weapon;
     int attract_threw;
     int attract_frame;
     int shops_never_close; /* on unless HC_SHOP_HOURS=1 */
-    int warp_shop;         /* HC_WARP=shop: walk into Nook's shop once the town is up (unattended checks) */
+    int warp_shop;         /* walk into Nook's shop once the town is up */
+    int warp_in_demo;      /* HC_WARP=shop: the title demo's town counts too (unattended checks) */
     int warp_phase;        /* 0 waiting, 1 loading the shop's block, 2 walking to the door, 3 done */
     float warp_timer;
     int warp_door;
     float scene_time;
+    int scenario_debt;     /* HC_SCENARIO=debt: owe Nook a fortune, start at his shop */
+    u32 debt_start;        /* HC_DEBT=<bells> */
+    int debt_live;
+    u32 debt_written;      /* the loan as last written, to notice payments */
+    int debt_greeted;      /* this scene's Nook greeting has been replaced */
 } HcState;
 
 static HcState g;
@@ -213,6 +221,8 @@ static void hc_init_once(void) {
     const char* aw = getenv("HC_ATTRACT_WEAPON");
     g.attract_only = aw ? atoi(aw) : 0;
     if (g.attract_only < 0 || g.attract_only > HALO_WEAPON_COUNT) g.attract_only = 0;
+    const char* tk = getenv("HC_AUTO_TALK");
+    g.auto_talk = tk && tk[0] == '1';
     const char* va = getenv("HC_VILLAGER_ALL");
     hc_villagers_set_treat_all(va && va[0] == '1');
     const char* gm = getenv("HC_INVINCIBLE");
@@ -220,7 +230,12 @@ static void hc_init_once(void) {
     const char* sh = getenv("HC_SHOP_HOURS");
     g.shops_never_close = !(sh && sh[0] == '1');
     const char* wp = getenv("HC_WARP");
-    g.warp_shop = wp && strcmp(wp, "shop") == 0;
+    g.warp_in_demo = wp && strcmp(wp, "shop") == 0;
+    const char* sc = getenv("HC_SCENARIO");
+    g.scenario_debt = sc && strcmp(sc, "debt") == 0;
+    const char* db = getenv("HC_DEBT");
+    g.debt_start = db && atol(db) > 0 ? (u32)atol(db) : HC_DEBT_BELLS;
+    g.warp_shop = g.warp_in_demo || g.scenario_debt;
     hc_fp_view_init();
     hc_biped_view_init();
     hc_hud_view_init();
@@ -437,9 +452,10 @@ static ACTOR* find_shop_building(GAME_PLAY* play, int* door) {
  * walks him at the door from the south-west so unattended runs go through
  * the real door code. Warps straight in if that fails. */
 static int warp_to_shop(GAME_PLAY* play, HaloUnit* p, float dt) {
-    p->control.throttle_forward = p->control.throttle_left = 0.0f;
     if (g.warp_phase == 0) {
-        if (!town_scene(play) || g.scene_time < 3.0f) return 0;
+        int town = play->scene_id == SCENE_FG || (play->scene_id == SCENE_TITLE_DEMO && g.warp_in_demo);
+        if (!town || g.scene_time < 3.0f) return 0;
+        p->control.throttle_forward = p->control.throttle_left = 0.0f;
         /* The block kind table isn't filled in for the title demo; look for
          * the building itself in every block's field items. */
         int bx = -1, bz = -1, ux = 8, uz = 8;
@@ -469,6 +485,7 @@ static int warp_to_shop(GAME_PLAY* play, HaloUnit* p, float dt) {
         return 1;
     }
     if (g.warp_phase == 1) {
+        p->control.throttle_forward = p->control.throttle_left = 0.0f;
         g.warp_timer += dt;
         ACTOR* shop = find_shop_building(play, &g.warp_door);
         if (shop) {
@@ -488,6 +505,7 @@ static int warp_to_shop(GAME_PLAY* play, HaloUnit* p, float dt) {
     if (g.warp_phase != 2) return 0;
     g.warp_timer += dt;
     p->control.throttle_forward = 1.0f;
+    p->control.throttle_left = 0.0f;
     p->control.aim_yaw = hc_a2h_yaw(HC_SHOP_DOOR_FACING);
     if (g.warp_timer > 6.0f) {
         g.warp_phase = 3;
@@ -512,6 +530,40 @@ static int warp_to_shop(GAME_PLAY* play, HaloUnit* p, float dt) {
 int hc_hook_shops_never_close(void) {
     hc_init_once();
     return g.shops_never_close;
+}
+
+/* ---- HC_SCENARIO=debt -------------------------------------------------------- */
+
+/* Starts once the real town is up (the title demo only with HC_WARP=shop):
+ * the Halo camera, a fortune on the house loan, and a walk to Nook's. */
+static void start_debt(GAME_PLAY* play) {
+    if (!g.scenario_debt || g.debt_live || Now_Private == NULL) return;
+    if (play->scene_id != SCENE_FG && !(play->scene_id == SCENE_TITLE_DEMO && g.warp_in_demo)) return;
+    g.debt_live = 1;
+    g.first_person = 1;
+    hc_villagers_set_debt(g.debt_start);
+    g.debt_written = Now_Private->inventory.loan;
+    hc_log("debt: you owe tom nook %u bells (loan was %u)", (unsigned)g.debt_start, (unsigned)g.debt_written);
+}
+
+/* The loan in the save follows Nook's interest; paying at the post office
+ * comes back the other way. */
+static void sync_debt(void) {
+    if (!g.debt_live || Now_Private == NULL) return;
+    u32 loan = Now_Private->inventory.loan;
+    if (loan != g.debt_written) {
+        hc_log("debt: you paid, loan %u -> %u", g.debt_written, loan);
+        hc_villagers_set_debt(loan);
+    }
+    Now_Private->inventory.loan = g.debt_written = hc_villagers_debt();
+}
+
+int hc_hook_message(struct actor_s* speaker, int msg_no, unsigned char* text, int cap) {
+    if (!g.debt_live || g.debt_greeted || hc_villagers_debt() == 0 || !hc_villagers_is_nook_actor(speaker)) return 0;
+    g.debt_greeted = 1;
+    int n = hc_villagers_debt_greeting(text, cap);
+    hc_log("debt: nook's greeting (msg %d) replaced, %d bytes", msg_no, n);
+    return n;
 }
 
 static void handle_fkeys(GAME_PLAY* play) {
@@ -623,6 +675,7 @@ void hc_hook_play_init(GAME_PLAY* play) {
     g.zoom_level = 0;
     g.active = 0;
     g.scene_time = 0.0f;
+    g.debt_greeted = 0;
     if (g.warp_phase == 1 || g.warp_phase == 2) {
         g.warp_phase = 3;
         hc_log("warp: through the door into scene %d", play->scene_id);
@@ -655,6 +708,8 @@ void hc_hook_play_update(GAME_PLAY* play) {
     }
 
     handle_fkeys(play);
+    start_debt(play);
+    sync_debt();
     g.fps_live = g.first_person && !dialogue_open() && !g_pc_paused && !ac_owns_player(pl);
     hc_input_set_capture(&g.input, g.fps_live && !g.no_capture && SDL_GetKeyboardFocus() != NULL);
 
@@ -805,7 +860,7 @@ int hc_hook_sdl_event(const union SDL_Event* e) {
 
 void hc_hook_filter_pad(struct PADStatus* status) {
     if (status == NULL) return;
-    if (g.attract && !g.input.capture && g.active && dialogue_open()) {
+    if ((g.attract || g.auto_talk) && !g.input.capture && g.active && dialogue_open()) {
         /* The tour can't read; tap A through whatever it's being told. */
         static unsigned frame;
         status->button = (++frame % 16) < 4 ? PAD_BUTTON_A : 0;
