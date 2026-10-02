@@ -234,3 +234,41 @@ Gfx* hc_gfx_hud_rect(Gfx* g, float x, float y, float w, float h, u32 rgba) {
     g = gfx_gSPTextureRectangle1(g, xl, yl, xh, yh, 0, 0, 0, 0, 0);
     return g;
 }
+
+#define GX_WRAP_CLAMP 0 /* GXTexWrapMode GX_CLAMP */
+#define CC_TEX_PRIM TEXEL0, 0, PRIMITIVE, 0, TEXEL0, 0, PRIMITIVE, 0
+
+Gfx* hc_gfx_hud_sprite_mode(Gfx* g) {
+    gDPPipeSync(g++);
+    gDPSetOtherMode(g++,
+                    G_AD_DISABLE | G_CD_MAGICSQ | G_CK_NONE | G_TC_FILT | G_TF_BILERP | G_TT_NONE | G_TL_TILE |
+                        G_TD_CLAMP | G_TP_NONE | G_CYC_1CYCLE | G_PM_NPRIMITIVE,
+                    G_AC_NONE | G_ZS_PRIM | G_RM_XLU_SURF | G_RM_XLU_SURF2);
+    gDPSetCombineMode(g++, CC_TEX_PRIM, CC_TEX_PRIM);
+    return g;
+}
+
+Gfx* hc_gfx_hud_sprite(Gfx* g, const void* pixels, int tw, int th, float x, float y, float w, float h, float s, float t,
+                       float ds, float dt, u32 rgba) {
+    if (pixels == NULL || w <= 0.0f || h <= 0.0f || HC_A(rgba) == 0) return g;
+    int xl = (int)lroundf(x * 4.0f), yl = (int)lroundf(y * 4.0f);
+    int xh = (int)lroundf((x + w) * 4.0f), yh = (int)lroundf((y + h) * 4.0f);
+    if (xh <= xl || yh <= yl || xh <= 0 || yh <= 0 || xl >= 320 * 4 || yl >= 240 * 4) return g;
+    /* Rectangle coordinates are unsigned: clip at the top-left edges. */
+    if (xl < 0) {
+        s -= (float)xl * 0.25f * ds;
+        xl = 0;
+    }
+    if (yl < 0) {
+        t -= (float)yl * 0.25f * dt;
+        yl = 0;
+    }
+    /* The macro takes height before width. */
+    gDPSetTextureImage_Dolphin(g++, G_IM_FMT_RGBA, G_IM_SIZ_32b, th, tw, pixels);
+    g->words.w1 = 0;
+    gDPSetTile_Dolphin(g++, G_DOLPHIN_TLUT_DEFAULT_MODE, G_TX_RENDERTILE, 0, GX_WRAP_CLAMP, GX_WRAP_CLAMP, 0, 0);
+    gDPSetTileSize_Dolphin(g++, G_TX_RENDERTILE, 0, 0, tw, th);
+    gDPSetPrimColor(g++, 0, 0, HC_R(rgba), HC_G(rgba), HC_B(rgba), HC_A(rgba));
+    return gfx_gSPTextureRectangle1(g, xl, yl, xh, yh, G_TX_RENDERTILE, (int)lroundf(s * 32.0f), (int)lroundf(t * 32.0f),
+                                    (int)lroundf(ds * 1024.0f), (int)lroundf(dt * 1024.0f));
+}

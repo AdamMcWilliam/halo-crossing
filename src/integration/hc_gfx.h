@@ -63,5 +63,11 @@ Gfx* hc_gfx_beam(Gfx* g, GRAPH* graph, xyz_t a, xyz_t b, xyz_t eye, float width,
 /* 2D in FONT_DISP, 320x240 screen space. */
 Gfx* hc_gfx_hud_mode(Gfx* g);
 Gfx* hc_gfx_hud_rect(Gfx* g, float x, float y, float w, float h, u32 rgba);
+/* Bilinear texture x primitive colour; switch back with hc_gfx_hud_mode. */
+Gfx* hc_gfx_hud_sprite_mode(Gfx* g);
+/* A GameCube RGBA8 texture (tw x th) tinted by rgba over the screen rect
+ * (x, y, w, h), sampled from texel (s, t) at (ds, dt) texels per pixel. */
+Gfx* hc_gfx_hud_sprite(Gfx* g, const void* pixels, int tw, int th, float x, float y, float w, float h, float s, float t,
+                       float ds, float dt, u32 rgba);
 
 #endif
