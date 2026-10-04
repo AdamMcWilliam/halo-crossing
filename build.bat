@@ -11,5 +11,7 @@ if not exist "%MSYS2_ROOT%\usr\bin\bash.exe" (
 )
 set MSYSTEM=MINGW32
 set CHERE_INVOKING=1
+rem MSYS2's own tools stay first; Git for Windows is found if MSYS2 has no git.
+if "%MSYS2_PATH_TYPE%"=="" set MSYS2_PATH_TYPE=inherit
 "%MSYS2_ROOT%\usr\bin\bash.exe" -lc "./build.sh %*"
 exit /b %ERRORLEVEL%
