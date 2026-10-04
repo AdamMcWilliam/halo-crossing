@@ -1,7 +1,7 @@
 # Halo Crossing developer guide
 
 An experimental fan prototype: Halo: Combat Evolved combat inside an Animal
-Crossing (GameCube) town. Animal Crossing is the host engine (via the
+Crossing (GameCube) town. To just play it, follow [README.md](README.md). Animal Crossing is the host engine (via the
 [ACGC-PC-Port](https://github.com/flyngmt/ACGC-PC-Port) decomp). Halo's sandbox
 is reimplemented in portable C from documented behaviour. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
@@ -13,7 +13,7 @@ your own legally obtained copies (see [assets_local/README.md](assets_local/READ
 
 1. [MSYS2](https://www.msys2.org/). In the **MSYS2 MINGW32** shell, install:
    ```
-   pacman -S git mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-SDL2 mingw-w64-i686-gdb
+   pacman -S git mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-SDL2 mingw-w64-i686-python mingw-w64-i686-gdb
    ```
 2. Python 3 on PATH. Optional: Pillow, for `tools/devctl.py` screenshots.
 3. Your Animal Crossing (USA, GAFE01) disc image at
@@ -22,7 +22,7 @@ your own legally obtained copies (see [assets_local/README.md](assets_local/READ
 ## Build and run
 
 ```
-git clone --recursive <this repo> halo-crossing
+git clone --recursive https://github.com/AdamMcWilliam/halo-crossing.git
 cd halo-crossing
 build.bat           # Windows (runs build.sh in MINGW32)
 build.bat run       # build and launch
