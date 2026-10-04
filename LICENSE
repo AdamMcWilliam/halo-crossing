@@ -19,14 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This license covers only the original code and documentation in this
-repository. It grants no rights to Animal Crossing or Halo: Combat Evolved,
-or to any of their code, assets or trademarks, which belong to Nintendo and
-Microsoft respectively.
-
-external/ACGC-PC-Port is a separate project under its own license (CC0 for
-the ac-decomp code, MIT for its PC layer). patches/host/ modifies that
-project and is covered by this license only for the lines it adds.

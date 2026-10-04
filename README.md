@@ -248,8 +248,13 @@ Open a new window to play normally again.
 ## License
 
 The code in this repository is MIT licensed; see [LICENSE](LICENSE). That
-covers this project's own code only, not either game or anything on their
-discs. The AC port keeps its own license.
+covers this project's own code and documentation only. It grants no rights to
+Animal Crossing or Halo: Combat Evolved, or to any of their code, assets or
+trademarks, which belong to Nintendo and Microsoft.
+
+`external/ACGC-PC-Port` is a separate project under its own license: CC0 for
+the ac-decomp code and MIT for its PC layer. `patches/host/` modifies that
+project, and this license covers only the lines the patch adds.
 
 ## More
 
