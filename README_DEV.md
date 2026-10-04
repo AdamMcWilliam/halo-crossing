@@ -92,7 +92,7 @@ drop an existing USA (`GAFE`) town save there. Keep an untouched copy in
 `assets_local/saves/`, because the game overwrites the installed file when
 you save.
 
-The title-screen demo runs in your town, so `HC_FIRST_PERSON=1 HC_NO_CAPTURE=1
+The title-screen demo runs in a town (no save needed), so `HC_FIRST_PERSON=1 HC_NO_CAPTURE=1
 HC_ATTRACT=1 HC_VILLAGER_ALL=1` exercises the whole sandbox without touching a
 save file; add `HC_WARP=shop` to take the tour into Nook's shop. The tour taps
 A through any dialogue. `HC_SCENARIO=debt HC_ATTRACT=0 HC_VILLAGER_ALL=0

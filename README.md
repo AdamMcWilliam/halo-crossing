@@ -44,7 +44,7 @@ repository. It also ships no game assets.
 | PC | Windows 10 or 11, 64-bit. A GPU with OpenGL 3.3. |
 | Animal Crossing | A disc image of the **USA** GameCube release (game ID `GAFE01`, revision 0), made from a disc you own (for example with CleanRip on a Wii). `.iso`, `.gcm` and `.ciso` work. For `.rvz`, convert it first in Dolphin: right-click the game, choose **Convert File...**, and pick ISO. |
 | Halo: Combat Evolved | Optional but strongly recommended. A disc image of the **Xbox** release made from a disc you own, as an XISO or a full ISO. Tested with the USA release. Without it the game still runs, but the Chief, his weapons and the Covenant are placeholder boxes, sounds are beeps, and the HUD is a simple one. |
-| Disk space | About 1 GB for the build and converted packs, plus your disc images. |
+| Disk space | About 200 MB for the code, build and converted packs, plus your disc images. |
 
 ## 1. Install the tools
 
@@ -65,8 +65,8 @@ repository. It also ships no game assets.
    pip install numpy
    ```
    This is only needed for the Halo importer.
-4. Install [Git for Windows](https://git-scm.com/download/win), or use the
-   MSYS2 `git` from step 2 inside the MINGW32 shell.
+4. Install [Git for Windows](https://git-scm.com/download/win) so you can
+   clone from PowerShell. The build can use either this or MSYS2's `git`.
 
 ## 2. Get the code
 
@@ -100,7 +100,7 @@ release, and the port won't run it.
 python tools\import_halo.py --iso "D:\path\to\your\Halo - Combat Evolved.iso"
 ```
 
-This reads the image in place and takes a few minutes. When it finishes,
+This reads the image in place and takes about 10 seconds. When it finishes,
 `assets_local\halo\generated\` contains four files: `fp_weapons.hcpk`,
 `bipeds.hcpk`, `sounds.hcpk` and `hud.hcpk`, about 32 MB in total. These are
 converted from your disc. Keep them to yourself.
@@ -114,8 +114,9 @@ written by an older importer and falls back to the placeholders.
 .\build.bat
 ```
 
-The first build takes several minutes. `build.bat` runs `build.sh` in
-MSYS2's MINGW32 environment. It applies `patches/host/` to the AC port,
+The first build compiles about 4,000 files: under two minutes on a fast PC,
+longer on a slower one. Later builds only recompile what changed. `build.bat`
+runs `build.sh` in MSYS2's MINGW32 environment. It applies `patches/host/` to the AC port,
 builds `build\host\bin\AnimalCrossing.exe`, and links your disc image into
 `build\host\bin\rom\`.
 
@@ -131,8 +132,8 @@ imported. No game data is needed for the sandbox tests.
 Or start `build\host\bin\AnimalCrossing.exe` directly. Its working folder
 must be `build\host\bin`.
 
-At the title screen press **Enter**, then **Enter** again on **Start Game**.
-With no save, Animal Crossing begins a new game, as on the GameCube: the
+At the title screen, press **Enter** with **Start Game** selected. With no
+save, Animal Crossing begins a new game, as on the GameCube: the
 train ride with Rover, then picking your name and town. Once you arrive,
 press **F1** to switch to the Halo camera. About 40 Covenant are already
 spread around the town; the ones far away sleep until they hear gunfire.
@@ -204,8 +205,9 @@ set HC_INVASION=0
 AnimalCrossing.exe
 ```
 
-Don't press anything at the title screen. After about 15 seconds the demo
-starts and walks you through Nook's door. `HC_AUTO_TALK` presses A through
+Don't press anything at the title screen. About 10 seconds after launch the
+demo starts in town and walks you through Nook's door. This works without
+any save file. `HC_AUTO_TALK` presses A through
 the dialogue for you. `HC_INVASION=0` keeps the Covenant out, so it's just
 you and Nook. Leave it out if you want company. If the demo goes back to the
 title screen, close the game and start it again to replay the scene.
