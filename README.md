@@ -245,6 +245,12 @@ Open a new window to play normally again.
 | The window opens and closes straight away | Start it from `build\host\bin`, and check that `build\host\bin\rom\` contains your disc image. Rebuilding with `.\build.bat` puts it back. |
 | Stuck with the mouse captured | Press **Esc**. |
 
+## License
+
+The code in this repository is MIT licensed; see [LICENSE](LICENSE). That
+covers this project's own code only, not either game or anything on their
+discs. The AC port keeps its own license.
+
 ## More
 
 * [README_DEV.md](README_DEV.md): every environment switch, debug keys,
