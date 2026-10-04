@@ -8,16 +8,26 @@
 # Reference decomps (fetched by tools/fetch_references.py, read-only research)
 /external/ref/
 
-# Disc images / dumps anywhere in the tree
+# Disc images, dumps, executables and saves anywhere in the tree
 *.iso
 *.gcm
 *.ciso
 *.rvz
 *.gcz
 *.wia
+*.wbfs
+*.nkit
+*.xiso
 *.xbe
+*.xex
+*.dol
+*.rel
 *.map
 *.gci
+*.gcs
+*.sav
+*.hcpk
+rom/
 
 # Editor / OS noise
 .vscode/
