@@ -127,7 +127,9 @@ Each host frame (`play_main`):
    grenades, reticle, motion sensor, damage arcs, zoom mask, text).
 
 SDL events go through `hc_hook_sdl_event` before the port's own handling.
-Pad 0 passes through `hc_hook_filter_pad`.
+Pad 0 passes through `hc_hook_filter_pad`. When a message window loads a
+message, `hc_hook_message` can rewrite its text before it appears. The debt
+scenario uses this to replace Nook's greeting.
 
 AC's per-frame display-list arenas are sized for AC alone: POLY_OPA has 9,952
 Gfx words, POLY_XLU 2,048, FONT 1,792. `hc_gfx_begin()` points the host's
